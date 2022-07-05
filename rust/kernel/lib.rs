@@ -29,6 +29,7 @@
 #![feature(dispatch_from_dyn)]
 #![feature(unsize)]
 #![feature(strict_provenance)]
+#![feature(new_uninit)]
 
 // Ensure conditional compilation based on the kernel configuration works;
 // otherwise we may silently break things like initcall handling.
@@ -98,6 +99,8 @@ pub mod of;
 pub mod platform;
 mod types;
 pub mod user_ptr;
+
+pub mod box_ext;
 
 #[cfg(CONFIG_KUNIT)]
 pub mod kunit;
