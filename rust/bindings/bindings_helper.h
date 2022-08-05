@@ -11,6 +11,7 @@
 #include <linux/errname.h>
 #include <linux/ethtool.h>
 #include <linux/mdio.h>
+#include <linux/pci.h>
 #include <linux/phy.h>
 #include <linux/slab.h>
 #include <linux/refcount.h>

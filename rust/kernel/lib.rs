@@ -13,6 +13,7 @@
 
 #![no_std]
 #![feature(allocator_api)]
+#![feature(associated_type_defaults)]
 #![feature(coerce_unsized)]
 #![feature(const_maybe_uninit_zeroed)]
 #![feature(const_refs_to_cell)]
@@ -59,6 +60,8 @@ pub mod workqueue;
 #[doc(hidden)]
 pub use bindings;
 pub use macros;
+#[cfg(CONFIG_PCI)]
+pub mod pci;
 pub use uapi;
 
 #[doc(hidden)]
