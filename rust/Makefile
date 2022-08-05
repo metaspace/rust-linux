@@ -14,6 +14,7 @@ RUST_HELPERS := \
 	err \
 	kunit \
 	mutex \
+	pci \
 	rcu \
 	refcount \
 	signal \
