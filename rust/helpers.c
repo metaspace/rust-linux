@@ -30,6 +30,7 @@
 #include <linux/errname.h>
 #include <linux/highmem.h>
 #include <linux/mutex.h>
+#include <linux/pci.h>
 #include <linux/refcount.h>
 #include <linux/sched/signal.h>
 #include <linux/spinlock.h>
@@ -202,6 +203,18 @@ const char *rust_helper_dev_name(const struct device *dev)
 	return dev_name(dev);
 }
 EXPORT_SYMBOL_GPL(rust_helper_dev_name);
+
+void rust_helper_pci_set_drvdata(struct pci_dev *pdev, void *data)
+{
+    pci_set_drvdata(pdev, data);
+}
+EXPORT_SYMBOL_GPL(rust_helper_pci_set_drvdata);
+
+void *rust_helper_pci_get_drvdata(struct pci_dev *pdev)
+{
+    return pci_get_drvdata(pdev);
+}
+EXPORT_SYMBOL_GPL(rust_helper_pci_get_drvdata);
 
 /*
  * `bindgen` binds the C `size_t` type as the Rust `usize` type, so we can
