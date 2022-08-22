@@ -2,12 +2,44 @@
 
 //! Allocator support.
 
+use core::alloc::AllocError;
 use core::alloc::{GlobalAlloc, Layout};
 use core::ptr;
+use core::ptr::NonNull;
 
 use crate::bindings;
 
-struct KernelAllocator;
+pub(crate) struct KernelAllocator;
+
+impl KernelAllocator {
+    #[cfg(not(test))]
+    #[cfg(not(testlib))]
+    pub(crate) fn allocate_with_flags(
+        &self,
+        layout: Layout,
+        flags: bindings::gfp_t,
+    ) -> Result<NonNull<[u8]>, AllocError> {
+        // `krealloc()` is used instead of `kmalloc()` because the latter is
+        // an inline function and cannot be bound to as a result.
+        let mem = unsafe { bindings::krealloc(ptr::null(), layout.size(), flags) as *mut u8 };
+        if mem.is_null() {
+            return Err(AllocError);
+        }
+        let mem = unsafe { core::slice::from_raw_parts_mut(mem, bindings::ksize(mem as _)) };
+        // Safety: checked for non null above
+        Ok(unsafe { NonNull::new_unchecked(mem) })
+    }
+
+    #[cfg(test)]
+    #[cfg(testlib)]
+    pub(crate) fn allocate_with_flags(
+        &self,
+        layout: Layout,
+        _flags: bindings::gfp_t,
+    ) -> Result<NonNull<[u8]>, AllocError> {
+        self.allocate(layout)
+    }
+}
 
 unsafe impl GlobalAlloc for KernelAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
@@ -24,7 +56,7 @@ unsafe impl GlobalAlloc for KernelAllocator {
 }
 
 #[global_allocator]
-static ALLOCATOR: KernelAllocator = KernelAllocator;
+pub(crate) static ALLOCATOR: KernelAllocator = KernelAllocator;
 
 // `rustc` only generates these for some crate types. Even then, we would need
 // to extract the object file that has them from the archive. For the moment,
