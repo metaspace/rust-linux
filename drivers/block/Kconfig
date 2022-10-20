@@ -385,6 +385,10 @@ config BLK_DEV_UBLK
 	  can handle batch more effectively, but task_work_add() isn't exported
 	  for module, so ublk has to be built to kernel.
 
+config BLK_DEV_UBLK_ZONED
+	def_bool y
+	depends on BLK_DEV_UBLK && BLK_DEV_ZONED
+
 source "drivers/block/rnbd/Kconfig"
 
 endif # BLK_DEV

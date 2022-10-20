@@ -38,5 +38,6 @@ obj-$(CONFIG_BLK_DEV_RNBD)	+= rnbd/
 obj-$(CONFIG_BLK_DEV_NULL_BLK)	+= null_blk/
 
 obj-$(CONFIG_BLK_DEV_UBLK)			+= ublk_drv.o
+obj-$(CONFIG_BLK_DEV_UBLK_ZONED)		+= ublk_drv-zoned.o
 
 swim_mod-y	:= swim.o swim_asm.o
