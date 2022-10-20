@@ -78,6 +78,10 @@
 #define UBLK_F_USER_RECOVERY	(1UL << 3)
 
 #define UBLK_F_USER_RECOVERY_REISSUE	(1UL << 4)
+/*
+ * Enable zoned device support
+ */
+#define UBLK_F_ZONED (1ULL << 5)
 
 /* device state */
 #define UBLK_S_DEV_DEAD	0
@@ -129,6 +133,12 @@ struct ublksrv_ctrl_dev_info {
 #define		UBLK_IO_OP_DISCARD	3
 #define		UBLK_IO_OP_WRITE_SAME	4
 #define		UBLK_IO_OP_WRITE_ZEROES	5
+#define		UBLK_IO_OP_ZONE_OPEN		10
+#define		UBLK_IO_OP_ZONE_CLOSE		11
+#define		UBLK_IO_OP_ZONE_FINISH		12
+#define		UBLK_IO_OP_ZONE_APPEND		13
+#define		UBLK_IO_OP_ZONE_RESET		15
+#define		UBLK_IO_OP_DRV_IN		34
 
 #define		UBLK_IO_F_FAILFAST_DEV		(1U << 8)
 #define		UBLK_IO_F_FAILFAST_TRANSPORT	(1U << 9)
@@ -214,6 +224,12 @@ struct ublk_param_discard {
 	__u16	reserved0;
 };
 
+struct ublk_param_zoned {
+	__u64	max_open_zones;
+	__u64	max_active_zones;
+	__u64	max_append_size;
+};
+
 struct ublk_params {
 	/*
 	 * Total length of parameters, userspace has to set 'len' for both
@@ -224,10 +240,12 @@ struct ublk_params {
 	__u32	len;
 #define UBLK_PARAM_TYPE_BASIC           (1 << 0)
 #define UBLK_PARAM_TYPE_DISCARD         (1 << 1)
+#define UBLK_PARAM_TYPE_ZONED           (1 << 2)
 	__u32	types;			/* types of parameter included */
 
 	struct ublk_param_basic		basic;
 	struct ublk_param_discard	discard;
+	struct ublk_param_zoned		zoned;
 };
 
 #endif

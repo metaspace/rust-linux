@@ -20,6 +20,7 @@
 #include <linux/major.h>
 #include <linux/wait.h>
 #include <linux/blkdev.h>
+#include <linux/blkzoned.h>
 #include <linux/init.h>
 #include <linux/swap.h>
 #include <linux/slab.h>
@@ -51,10 +52,12 @@
 		| UBLK_F_URING_CMD_COMP_IN_TASK \
 		| UBLK_F_NEED_GET_DATA \
 		| UBLK_F_USER_RECOVERY \
-		| UBLK_F_USER_RECOVERY_REISSUE)
+		| UBLK_F_USER_RECOVERY_REISSUE \
+		| UBLK_F_ZONED)
 
 /* All UBLK_PARAM_TYPE_* should be included here */
-#define UBLK_PARAM_TYPE_ALL (UBLK_PARAM_TYPE_BASIC | UBLK_PARAM_TYPE_DISCARD)
+#define UBLK_PARAM_TYPE_ALL (UBLK_PARAM_TYPE_BASIC | UBLK_PARAM_TYPE_DISCARD \
+			     | UBLK_PARAM_TYPE_ZONED)
 
 struct ublk_rq_data {
 	struct llist_node node;
@@ -212,6 +215,11 @@ static void ublk_dev_param_basic_apply(struct ublk_device *ub)
 		set_disk_ro(ub->ub_disk, true);
 
 	set_capacity(ub->ub_disk, p->dev_sectors);
+
+	if (IS_ENABLED(CONFIG_BLK_DEV_ZONED) &&
+	    ub->dev_info.flags & UBLK_F_ZONED && p->chunk_sectors) {
+		ub->ub_disk->nr_zones = p->dev_sectors / p->chunk_sectors;
+	}
 }
 
 static void ublk_dev_param_discard_apply(struct ublk_device *ub)
@@ -225,6 +233,19 @@ static void ublk_dev_param_discard_apply(struct ublk_device *ub)
 	blk_queue_max_write_zeroes_sectors(q,
 			p->max_write_zeroes_sectors);
 	blk_queue_max_discard_segments(q, p->max_discard_segments);
+}
+
+static void ublk_dev_param_zoned_apply(struct ublk_device *ub)
+{
+	const struct ublk_param_zoned *p = &ub->params.zoned;
+
+	if (IS_ENABLED(CONFIG_BLK_DEV_ZONED) &&
+	    ub->dev_info.flags & UBLK_F_ZONED) {
+		disk_set_max_active_zones(ub->ub_disk, p->max_active_zones);
+		disk_set_max_open_zones(ub->ub_disk, p->max_open_zones);
+		/* We do not support zone append yet */
+		//blk_queue_max_zone_append_sectors(q, zone_size);
+	}
 }
 
 static int ublk_validate_params(const struct ublk_device *ub)
@@ -267,6 +288,9 @@ static int ublk_apply_params(struct ublk_device *ub)
 
 	if (ub->params.types & UBLK_PARAM_TYPE_DISCARD)
 		ublk_dev_param_discard_apply(ub);
+
+	if (ub->params.types & UBLK_PARAM_TYPE_ZONED)
+		ublk_dev_param_zoned_apply(ub);
 
 	return 0;
 }
@@ -361,9 +385,18 @@ static void ublk_free_disk(struct gendisk *disk)
 	put_device(&ub->cdev_dev);
 }
 
+#if IS_ENABLED(CONFIG_BLK_DEV_ZONED)
+static int ublk_report_zones(struct gendisk *disk, sector_t sector,
+			     unsigned int nr_zones, report_zones_cb cb,
+			     void *data);
+#endif
+
 static const struct block_device_operations ub_fops = {
-	.owner =	THIS_MODULE,
-	.free_disk =	ublk_free_disk,
+	.owner = THIS_MODULE,
+	.free_disk = ublk_free_disk,
+#if IS_ENABLED(CONFIG_BLK_DEV_ZONED)
+	.report_zones = ublk_report_zones,
+#endif
 };
 
 #define UBLK_MAX_PIN_PAGES	32
@@ -499,7 +532,7 @@ static int ublk_unmap_io(const struct ublk_queue *ubq,
 {
 	const unsigned int rq_bytes = blk_rq_bytes(req);
 
-	if (req_op(req) == REQ_OP_READ && ublk_rq_has_data(req)) {
+	if ((req_op(req) == REQ_OP_READ || req_op(req) == REQ_OP_DRV_IN) && ublk_rq_has_data(req)) {
 		struct ublk_map_data data = {
 			.ubq	=	ubq,
 			.rq	=	req,
@@ -566,6 +599,26 @@ static blk_status_t ublk_setup_iod(struct ublk_queue *ubq, struct request *req)
 	case REQ_OP_WRITE_ZEROES:
 		ublk_op = UBLK_IO_OP_WRITE_ZEROES;
 		break;
+#ifdef CONFIG_BLK_DEV_ZONED
+	case REQ_OP_ZONE_OPEN:
+		ublk_op = UBLK_IO_OP_ZONE_OPEN;
+		break;
+	case REQ_OP_ZONE_CLOSE:
+		ublk_op = UBLK_IO_OP_ZONE_CLOSE;
+		break;
+	case REQ_OP_ZONE_FINISH:
+		ublk_op = UBLK_IO_OP_ZONE_FINISH;
+		break;
+	case REQ_OP_ZONE_RESET:
+		ublk_op = UBLK_IO_OP_ZONE_RESET;
+		break;
+	case REQ_OP_DRV_IN:
+		ublk_op = UBLK_IO_OP_DRV_IN;
+		break;
+	case REQ_OP_ZONE_APPEND:
+		/* We do not support zone append yet */
+		fallthrough;
+#endif
 	default:
 		return BLK_STS_IOERR;
 	}
@@ -612,7 +665,8 @@ static void ublk_complete_rq(struct request *req)
 	 *
 	 * Both the two needn't unmap.
 	 */
-	if (req_op(req) != REQ_OP_READ && req_op(req) != REQ_OP_WRITE) {
+	if (req_op(req) != REQ_OP_READ && req_op(req) != REQ_OP_WRITE &&
+	    req_op(req) != REQ_OP_DRV_IN) {
 		blk_mq_end_request(req, BLK_STS_OK);
 		return;
 	}
@@ -1493,6 +1547,73 @@ static struct ublk_device *ublk_get_device_from_id(int idx)
 	return ub;
 }
 
+#ifdef CONFIG_BLK_DEV_ZONED
+static int ublk_report_zones(struct gendisk *disk, sector_t sector,
+			     unsigned int nr_zones, report_zones_cb cb,
+			     void *data)
+{
+	struct ublk_device *ub;
+	unsigned int zone_size;
+	unsigned int first_zone;
+	int ret = 0;
+
+	ub = disk->private_data;
+
+	if (!(ub->dev_info.flags & UBLK_F_ZONED))
+		return -EINVAL;
+
+	zone_size = disk->queue->limits.chunk_sectors;
+	first_zone = sector >> ilog2(zone_size);
+
+	nr_zones = min(ub->ub_disk->nr_zones - first_zone, nr_zones);
+
+	for (unsigned int i = 0; i < nr_zones; i++) {
+
+		struct request *req;
+		blk_status_t status;
+		struct blk_zone info;
+
+		req = blk_mq_alloc_request(disk->queue, REQ_OP_DRV_IN, 0);
+
+		if (IS_ERR(req)) {
+			ret = PTR_ERR(req);
+			goto out;
+		}
+
+		req->__sector = sector;
+
+		ret = blk_rq_map_kern(disk->queue, req, &info, sizeof(info),
+				      GFP_KERNEL);
+
+		if (ret)
+			goto out;
+
+		status = blk_execute_rq(req, 0);
+		ret = blk_status_to_errno(status);
+		if (ret)
+			goto out;
+
+		blk_mq_free_request(req);
+
+		ret = cb(&info, i, data);
+		if (ret)
+			goto out;
+
+		/* A zero length zone means don't ask for more zones */
+		if (!info.len) {
+			nr_zones = i;
+			break;
+		}
+
+		sector += zone_size;
+	}
+	ret = nr_zones;
+
+ out:
+	return ret;
+}
+#endif
+
 static int ublk_ctrl_start_dev(struct io_uring_cmd *cmd)
 {
 	struct ublksrv_ctrl_cmd *header = (struct ublksrv_ctrl_cmd *)cmd->cmd;
@@ -1534,6 +1655,15 @@ static int ublk_ctrl_start_dev(struct io_uring_cmd *cmd)
 	ret = ublk_apply_params(ub);
 	if (ret)
 		goto out_put_disk;
+
+	if (IS_ENABLED(CONFIG_BLK_DEV_ZONED) &&
+	    ub->dev_info.flags & UBLK_F_ZONED) {
+		disk_set_zoned(disk, BLK_ZONED_HM);
+		blk_queue_required_elevator_features(disk->queue, ELEVATOR_F_ZBD_SEQ_WRITE);
+		ret = blk_revalidate_disk_zones(disk, NULL);
+		if (ret)
+			goto out_put_disk;
+	}
 
 	get_device(&ub->cdev_dev);
 	ret = add_disk(disk);
@@ -1672,6 +1802,9 @@ static int ublk_ctrl_add_dev(struct io_uring_cmd *cmd)
 
 	if (!IS_BUILTIN(CONFIG_BLK_DEV_UBLK))
 		ub->dev_info.flags |= UBLK_F_URING_CMD_COMP_IN_TASK;
+
+	if (!IS_ENABLED(CONFIG_BLK_DEV_ZONED))
+		ub->dev_info.flags &= ~UBLK_F_ZONED;
 
 	/* We are not ready to support zero copy */
 	ub->dev_info.flags &= ~UBLK_F_SUPPORT_ZERO_COPY;
