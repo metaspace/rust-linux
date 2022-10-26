@@ -70,6 +70,16 @@ config SAMPLE_RUST_MISCDEV
 
 	  If unsure, say N.
 
+config SAMPLE_RUST_BUFFER
+	tristate "File buffer"
+	help
+	  This option builds the Rust file buffer sample.
+
+	  To compile this as a module, choose M here:
+	  the module will be called rust_buffer.
+
+	  If unsure, say N.
+
 config SAMPLE_RUST_STACK_PROBING
 	tristate "Stack probing"
 	help
