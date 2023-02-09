@@ -64,20 +64,42 @@ pub trait Operations: Sized {
 struct OperationsVtable<T: Operations>(PhantomData<T>);
 
 impl<T: Operations> OperationsVtable<T> {
+    // # Safety
+    //
+    // The caller of this function must ensure that `hctx` and `bd` are valid
+    // and initialized. The pointees must outlive this function. Further
+    // `hctx->driver_data` must be a pointer created by a call to
+    // `Self::init_hctx_callback()` and the pointee must outlive this function.
+    // This function must not be called with a `hctx` for which
+    // `Self::exit_hctx_callback()` has been called.
     unsafe extern "C" fn queue_rq_callback(
         hctx: *mut bindings::blk_mq_hw_ctx,
         bd: *const bindings::blk_mq_queue_data,
     ) -> bindings::blk_status_t {
-        // SAFETY: `bd` is valid as required by this function.
+        // SAFETY: `bd` is valid as required by the safety requirement for this function.
         let rq = unsafe { (*bd).rq };
 
+        // SAFETY: The safety requirement for this function ensure that
+        // `(*hctx).driver_data` was returned by a call to
+        // `Self::init_hctx_callback()`. That function uses
+        // `PointerWrapper::into_pointer()` to create `driver_data`. Further,
+        // the returned value does not outlive this function and
+        // `from_pointer()` is not called until `Self::exit_hctx_callback()` is
+        // called. By the safety requirement of this function and contract with
+        // the `blk-mq` API, `queue_rq_callback()` will not be called after that
+        // point.
         let hw_data = unsafe { T::HwData::borrow((*hctx).driver_data) };
 
         // SAFETY: `hctx` is valid as required by this function.
         let queue_data = unsafe { (*(*hctx).queue).queuedata };
 
-        // SAFETY: TODO: Write justification.
+        // SAFETY: `queue.queuedata` was created by `GenDisk::try_new()` with a
+        // call to `ForeignOwnable::into_pointer()` to create `queuedata`.
+        // `ForeignOwnable::from_pointer()` is currently never called. TODO:
+        // teardown.
         let queue_data = unsafe { T::QueueData::borrow(queue_data) };
+
+        // SAFETY: `bd` is valid as required by the safety requirement for this function.
         let ret = T::queue_rq(hw_data, queue_data, &Request::from_ptr(rq), unsafe {
             (*bd).last
         });
