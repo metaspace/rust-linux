@@ -8,6 +8,7 @@
 
 #include <linux/blk_types.h>
 #include <linux/blk-mq.h>
+#include <linux/device.h>
 #include <linux/errname.h>
 #include <linux/slab.h>
 #include <linux/refcount.h>

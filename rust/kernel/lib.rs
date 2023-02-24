@@ -32,6 +32,7 @@ extern crate self as kernel;
 mod allocator;
 pub mod block;
 mod build_assert;
+pub mod device;
 pub mod error;
 pub mod init;
 pub mod ioctl;
