@@ -26,6 +26,7 @@
 #include <linux/blkdev.h>
 #include <linux/bug.h>
 #include <linux/build_bug.h>
+#include <linux/device.h>
 #include <linux/err.h>
 #include <linux/errname.h>
 #include <linux/highmem.h>
@@ -201,6 +202,18 @@ struct page *rust_helper_alloc_pages(gfp_t gfp_mask, unsigned int order)
 	return alloc_pages(gfp_mask, order);
 }
 EXPORT_SYMBOL_GPL(rust_helper_alloc_pages);
+
+ void *rust_helper_dev_get_drvdata(struct device *dev)
+{
+    return dev_get_drvdata(dev);
+}
+EXPORT_SYMBOL_GPL(rust_helper_dev_get_drvdata);
+
+const char *rust_helper_dev_name(const struct device *dev)
+{
+	return dev_name(dev);
+}
+EXPORT_SYMBOL_GPL(rust_helper_dev_name);
 
 /*
  * `bindgen` binds the C `size_t` type as the Rust `usize` type, so we can
