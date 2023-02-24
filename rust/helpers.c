@@ -23,6 +23,7 @@
 #include <kunit/test-bug.h>
 #include <linux/bug.h>
 #include <linux/build_bug.h>
+#include <linux/device.h>
 #include <linux/err.h>
 #include <linux/errname.h>
 #include <linux/mutex.h>
@@ -156,6 +157,18 @@ void rust_helper_init_work_with_key(struct work_struct *work, work_func_t func,
 	work->func = func;
 }
 EXPORT_SYMBOL_GPL(rust_helper_init_work_with_key);
+
+void *rust_helper_dev_get_drvdata(struct device *dev)
+{
+	return dev_get_drvdata(dev);
+}
+EXPORT_SYMBOL_GPL(rust_helper_dev_get_drvdata);
+
+const char *rust_helper_dev_name(const struct device *dev)
+{
+	return dev_name(dev);
+}
+EXPORT_SYMBOL_GPL(rust_helper_dev_name);
 
 /*
  * `bindgen` binds the C `size_t` type as the Rust `usize` type, so we can
