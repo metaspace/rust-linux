@@ -10,6 +10,7 @@ RUST_HELPERS := \
 	bug \
 	build_assert \
 	build_bug \
+	device \
 	err \
 	kunit \
 	mutex \
