@@ -12,11 +12,13 @@ use crate::{
     driver,
     error::{to_result, Result},
     io::Io,
+    irq,
     str::CStr,
     types::{ARef, ForeignOwnable},
     ThisModule,
 };
 use core::ops::Deref;
+use core::fmt;
 use kernel::prelude::*; // for pinned_drop
 
 /// An adapter for the registration of PCI drivers.
@@ -457,6 +459,83 @@ impl Device {
     /// Returns a new `ARef` of the base `device::Device`.
     pub fn as_dev(&self) -> ARef<device::Device> {
         self.0.clone()
+    }
+
+    // TODO: check that all these &self methods use internal synchronization
+    pub fn irq(&self) -> Option<u32> {
+        let pdev = self.as_raw();
+        let irq = unsafe { (*pdev).irq };
+        if irq == 0 {
+            None
+        } else {
+            Some(irq)
+        }
+    }
+
+    pub fn alloc_irq_vectors(&self, min_vecs: u32, max_vecs: u32, flags: u32) -> Result<u32> {
+        let ret = unsafe {
+            bindings::pci_alloc_irq_vectors_affinity(
+                self.as_raw(),
+                min_vecs,
+                max_vecs,
+                flags,
+                core::ptr::null_mut(),
+            )
+        };
+        if ret < 0 {
+            Err(Error::from_errno(ret))
+        } else {
+            Ok(ret as _)
+        }
+    }
+
+    pub fn alloc_irq_vectors_affinity(
+        &self,
+        min_vecs: u32,
+        max_vecs: u32,
+        pre: u32,
+        post: u32,
+        flags: u32,
+    ) -> Result<u32> {
+        let mut affd = bindings::irq_affinity {
+            pre_vectors: pre,
+            post_vectors: post,
+            ..bindings::irq_affinity::default()
+        };
+
+        let ret = unsafe {
+            bindings::pci_alloc_irq_vectors_affinity(
+                self.as_raw(),
+                min_vecs,
+                max_vecs,
+                flags | bindings::PCI_IRQ_AFFINITY,
+                &mut affd,
+            )
+        };
+        if ret < 0 {
+            Err(Error::from_errno(ret))
+        } else {
+            Ok(ret as _)
+        }
+    }
+
+    pub fn free_irq_vectors(&self) {
+        unsafe { bindings::pci_free_irq_vectors(self.as_raw()) };
+    }
+
+    pub fn request_irq<T: irq::Handler>(
+        &self,
+        index: u32,
+        data: T::Data,
+        name_args: fmt::Arguments<'_>,
+    ) -> Result<irq::Registration<T>> {
+        let ret = unsafe { bindings::pci_irq_vector(self.as_raw(), index) };
+        if ret < 0 {
+            return Err(Error::from_errno(ret));
+        }
+        crate::pr_info!("Setting up IRQ: {}\n", ret);
+
+        irq::Registration::try_new(ret as _, data, irq::flags::SHARED, name_args)
     }
 }
 
