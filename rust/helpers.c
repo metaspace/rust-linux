@@ -25,6 +25,7 @@
 #include <linux/blkdev.h>
 #include <linux/bug.h>
 #include <linux/build_bug.h>
+#include <linux/delay.h>
 #include <linux/device.h>
 #include <linux/err.h>
 #include <linux/errname.h>
@@ -37,7 +38,8 @@
 #include <linux/spinlock.h>
 #include <linux/wait.h>
 
-__noreturn void rust_helper_BUG(void)
+	__noreturn void
+	rust_helper_BUG(void)
 {
 	BUG();
 }
@@ -229,6 +231,12 @@ unsigned int rust_helper_num_possible_cpus(void)
 	return  num_possible_cpus();
 }
 EXPORT_SYMBOL_GPL(rust_helper_num_possible_cpus);
+
+void rust_helper_mdelay(uint64_t ms)
+{
+	mdelay(ms);
+}
+EXPORT_SYMBOL_GPL(rust_helper_mdelay);
 
 void rust_helper_pci_set_drvdata(struct pci_dev *pdev, void *data)
 {
