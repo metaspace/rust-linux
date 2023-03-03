@@ -7,13 +7,16 @@
 #![allow(dead_code)]
 
 use crate::{
-    bindings, device, driver,
+    bindings, bit, device, driver,
     error::{from_kernel_result, Result},
+    io_mem::Resource,
+    irq,
     str::CStr,
     to_result,
-    types::PointerWrapper,
-    ThisModule,
+    types::ForeignOwnable,
+    Error, ThisModule,
 };
+use core::fmt;
 
 /// An adapter for the registration of PCI drivers.
 pub struct Adapter<T: Driver>(T);
@@ -57,14 +60,14 @@ impl<T: Driver> Adapter<T> {
                 unsafe {(&*ptr).as_ref()}
             };
             let data = T::probe(&mut dev, info)?;
-            unsafe { bindings::pci_set_drvdata(pdev, data.into_pointer() as _) };
+            unsafe { bindings::pci_set_drvdata(pdev, data.into_foreign() as _) };
             Ok(0)
         }
     }
 
     extern "C" fn remove_callback(pdev: *mut bindings::pci_dev) {
         let ptr = unsafe { bindings::pci_get_drvdata(pdev) };
-        let data = unsafe { T::Data::from_pointer(ptr) };
+        let data = unsafe { T::Data::from_foreign(ptr) };
         T::remove(&data);
         <T::Data as driver::DeviceRemoval>::device_remove(&data);
     }
@@ -181,9 +184,11 @@ pub trait Driver {
     /// Corresponds to the data set or retrieved via the kernel's
     /// `pci_{set,get}_drvdata()` functions.
     ///
-    /// Require that `Data` implements `PointerWrapper`. We guarantee to
+    /// Require that `Data` implements `ForeignOwnable`. We guarantee to
     /// never move the underlying wrapped data structure. This allows
-    type Data: PointerWrapper + Send + Sync + driver::DeviceRemoval = ();
+    // TODO: Data Send + Sync ?
+    //type Data: ForeignOwnable + Send + Sync + driver::DeviceRemoval = ();
+    type Data: ForeignOwnable + driver::DeviceRemoval = ();
 
     /// The type holding information about each device id supported by the driver.
     type IdInfo: 'static = ();
@@ -211,11 +216,131 @@ pub trait Driver {
 /// The field `ptr` is non-null and valid for the lifetime of the object.
 pub struct Device {
     ptr: *mut bindings::pci_dev,
+    res_taken: u64,
 }
 
 impl Device {
-    unsafe fn from_ptr(ptr: *mut bindings::pci_dev) -> Self {
-        Self { ptr }
+    pub unsafe fn from_ptr(ptr: *mut bindings::pci_dev) -> Self {
+        Self { ptr, res_taken: 0 }
+    }
+
+    pub unsafe fn as_ptr(&self) -> *mut bindings::pci_dev {
+        self.ptr
+    }
+
+    pub fn enable_device_mem(&self) -> Result {
+        let ret = unsafe { bindings::pci_enable_device_mem(self.ptr) };
+        if ret != 0 {
+            Err(Error::from_kernel_errno(ret))
+        } else {
+            Ok(())
+        }
+    }
+
+    pub fn set_master(&self) {
+        unsafe { bindings::pci_set_master(self.ptr) };
+    }
+
+    pub fn select_bars(&self, flags: core::ffi::c_ulong) -> i32 {
+        unsafe { bindings::pci_select_bars(self.ptr, flags) }
+    }
+
+    pub fn request_selected_regions(&self, bars: i32, name: &'static CStr) -> Result {
+        let ret =
+            unsafe { bindings::pci_request_selected_regions(self.ptr, bars, name.as_char_ptr()) };
+        if ret != 0 {
+            Err(Error::from_kernel_errno(ret))
+        } else {
+            Ok(())
+        }
+    }
+
+    pub fn take_resource(&mut self, index: usize) -> Option<Resource> {
+        let pdev = unsafe { &*self.ptr };
+
+        // Fail if the index is beyond the end or if it has already been taken.
+        if index >= pdev.resource.len() || self.res_taken & bit(index) != 0 {
+            return None;
+        }
+
+        self.res_taken |= bit(index);
+        Resource::new(pdev.resource[index].start, pdev.resource[index].end)
+    }
+
+    pub fn irq(&self) -> Option<u32> {
+        let pdev = unsafe { &*self.ptr };
+
+        if pdev.irq == 0 {
+            None
+        } else {
+            Some(pdev.irq)
+        }
+    }
+
+    pub fn alloc_irq_vectors(&mut self, min_vecs: u32, max_vecs: u32, flags: u32) -> Result<u32> {
+        let ret = unsafe {
+            bindings::pci_alloc_irq_vectors_affinity(
+                self.ptr,
+                min_vecs,
+                max_vecs,
+                flags,
+                core::ptr::null_mut(),
+            )
+        };
+        if ret < 0 {
+            Err(Error::from_kernel_errno(ret))
+        } else {
+            Ok(ret as _)
+        }
+    }
+
+    pub fn alloc_irq_vectors_affinity(
+        &mut self,
+        min_vecs: u32,
+        max_vecs: u32,
+        pre: u32,
+        post: u32,
+        flags: u32,
+    ) -> Result<u32> {
+        let mut affd = bindings::irq_affinity {
+            pre_vectors: pre,
+            post_vectors: post,
+            ..bindings::irq_affinity::default()
+        };
+
+        let ret = unsafe {
+            bindings::pci_alloc_irq_vectors_affinity(
+                self.ptr,
+                min_vecs,
+                max_vecs,
+                flags | bindings::PCI_IRQ_AFFINITY,
+                &mut affd,
+            )
+        };
+        if ret < 0 {
+            Err(Error::from_kernel_errno(ret))
+        } else {
+            Ok(ret as _)
+        }
+    }
+
+    pub fn free_irq_vectors(&mut self) {
+        unsafe { bindings::pci_free_irq_vectors(self.ptr) };
+    }
+
+    pub fn request_irq<T: irq::Handler>(
+        &self,
+        index: u32,
+        data: T::Data,
+        name_args: fmt::Arguments<'_>,
+    ) -> Result<irq::Registration<T>> {
+        let ret = unsafe { bindings::pci_irq_vector(self.ptr, index) };
+        if ret < 0 {
+            return Err(Error::from_kernel_errno(ret));
+        }
+        crate::pr_info!("Setting up IRQ: {}\n", ret);
+
+        irq::Registration::try_new(ret as _, data, irq::flags::SHARED, name_args)
     }
 }
 
