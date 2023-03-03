@@ -354,6 +354,10 @@ config VIRTIO_BLK
 	  This is the virtual block driver for virtio.  It can be used with
           QEMU based VMMs (like KVM or Xen).  Say Y or M.
 
+config RUST_NVME
+	tristate "Rust NVMe PCI driver"
+	depends on RUST
+	  
 config BLK_DEV_RBD
 	tristate "Rados block device (RBD)"
 	depends on INET && BLOCK
