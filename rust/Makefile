@@ -12,6 +12,7 @@ RUST_HELPERS := \
 	build_assert \
 	build_bug \
 	num_cpus \
+	delay \
 	device \
 	err \
 	folio \
