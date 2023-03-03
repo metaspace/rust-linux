@@ -11,6 +11,7 @@ ccflags-y				+= -I$(src)
 
 obj-$(CONFIG_BLK_DEV_RUST_NULL) += rnull_mod.o
 rnull_mod-y := rnull.o
+obj-$(CONFIG_RUST_NVME) += rnvme.o
 
 obj-$(CONFIG_MAC_FLOPPY)	+= swim3.o
 obj-$(CONFIG_BLK_DEV_SWIM)	+= swim_mod.o
