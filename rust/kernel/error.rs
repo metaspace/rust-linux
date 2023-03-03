@@ -242,6 +242,10 @@ impl Error {
     pub fn name(&self) -> Option<&'static CStr> {
         None
     }
+
+    pub(crate) fn to_blk_status(self) -> bindings::blk_status_t {
+        unsafe { bindings::errno_to_blk_status(self.0) }
+    }
 }
 
 impl fmt::Debug for Error {

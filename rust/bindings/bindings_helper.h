@@ -36,9 +36,13 @@
 #include <linux/sysctl.h>
 #include <linux/uaccess.h>
 #include <linux/uio.h>
+#include <linux/blk_types.h>
+#include <linux/blk-mq.h>
+#include <linux/blk-mq-pci.h>
 
 /* `bindgen` gets confused at certain things. */
 const gfp_t BINDINGS_GFP_KERNEL = GFP_KERNEL;
+const gfp_t BINDINGS_GFP_ATOMIC = GFP_ATOMIC;
 const gfp_t BINDINGS___GFP_ZERO = __GFP_ZERO;
 const __poll_t BINDINGS_EPOLLIN = EPOLLIN;
 const __poll_t BINDINGS_EPOLLOUT = EPOLLOUT;
