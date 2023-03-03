@@ -263,7 +263,7 @@ $(obj)/%.lst: $(src)/%.c FORCE
 # Compile Rust sources (.rs)
 # ---------------------------------------------------------------------------
 
-rust_allowed_features := new_uninit,offset_of,allocator_api
+rust_allowed_features := new_uninit,offset_of,allocator_api,impl_trait_in_assoc_type,return_position_impl_trait_in_trait,sync_unsafe_cell
 
 # `--out-dir` is required to avoid temporaries being created by `rustc` in the
 # current working directory, which may be not accessible in the out-of-tree
