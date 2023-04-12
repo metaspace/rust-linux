@@ -349,6 +349,7 @@ impl Device {
 }
 
 unsafe impl device::RawDevice for Device {
+    #[inline(always)]
     fn raw_device(&self) -> *mut bindings::device {
         // SAFETY: By the type invariants, we know that `self.ptr` is non-null and valid.
         unsafe { &mut (*self.ptr).dev }

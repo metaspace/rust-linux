@@ -9,7 +9,10 @@
 # needed for trace events
 ccflags-y				+= -I$(src)
 
-obj-$(CONFIG_RUST_NVME) += rnvme.o
+obj-$(CONFIG_RUST_NVME) += rnvme_mod.o
+rnvme_mod-y := rnvme-helpers.o rnvme.o
+LLVM_LINK_FIX_drivers/block/rnvme_mod.o := 1
+
 obj-$(CONFIG_MAC_FLOPPY)	+= swim3.o
 obj-$(CONFIG_BLK_DEV_SWIM)	+= swim_mod.o
 obj-$(CONFIG_BLK_DEV_FD)	+= floppy.o
