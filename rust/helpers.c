@@ -26,6 +26,7 @@
 #include <linux/err.h>
 #include <linux/errname.h>
 #include <linux/mutex.h>
+#include <linux/radix-tree.h>
 #include <linux/refcount.h>
 #include <linux/sched/signal.h>
 #include <linux/spinlock.h>
@@ -156,6 +157,28 @@ void rust_helper_init_work_with_key(struct work_struct *work, work_func_t func,
 	work->func = func;
 }
 EXPORT_SYMBOL_GPL(rust_helper_init_work_with_key);
+
+
+void rust_helper_init_radix_tree(struct xarray *tree, gfp_t gfp_mask)
+{
+	INIT_RADIX_TREE(tree, gfp_mask);
+}
+EXPORT_SYMBOL_GPL(rust_helper_init_radix_tree);
+
+void **rust_helper_radix_tree_iter_init(struct radix_tree_iter *iter,
+					unsigned long start)
+{
+	return radix_tree_iter_init(iter, start);
+}
+EXPORT_SYMBOL_GPL(rust_helper_radix_tree_iter_init);
+
+void **rust_helper_radix_tree_next_slot(void **slot,
+					struct radix_tree_iter *iter,
+					unsigned flags)
+{
+	return radix_tree_next_slot(slot, iter, flags);
+}
+EXPORT_SYMBOL_GPL(rust_helper_radix_tree_next_slot);
 
 /*
  * `bindgen` binds the C `size_t` type as the Rust `usize` type, so we can
