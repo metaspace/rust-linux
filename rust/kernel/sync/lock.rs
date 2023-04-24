@@ -6,7 +6,9 @@
 //! spinlocks, raw spinlocks) to be provided with minimal effort.
 
 use super::LockClassKey;
-use crate::{bindings, init::PinInit, pin_init, str::CStr, types::Opaque, types::ScopeGuard};
+use crate::{
+    bindings, init::PinInit, pin_init, str::CStr, types::Opaque, types::ScopeGuard, CachePadded,
+};
 use core::{cell::UnsafeCell, marker::PhantomData, marker::PhantomPinned};
 use macros::pin_data;
 
@@ -87,7 +89,7 @@ pub struct Lock<T: ?Sized, B: Backend> {
     _pin: PhantomPinned,
 
     /// The data protected by the lock.
-    pub(crate) data: UnsafeCell<T>,
+    pub(crate) data: CachePadded<UnsafeCell<T>>,
 }
 
 // SAFETY: `Lock` can be transferred across thread boundaries iff the data it protects can.
@@ -102,7 +104,7 @@ impl<T, B: Backend> Lock<T, B> {
     #[allow(clippy::new_ret_no_self)]
     pub fn new(t: T, name: &'static CStr, key: &'static LockClassKey) -> impl PinInit<Self> {
         pin_init!(Self {
-            data: UnsafeCell::new(t),
+            data: CachePadded::new(UnsafeCell::new(t)),
             _pin: PhantomPinned,
             // SAFETY: `slot` is valid while the closure is called and both `name` and `key` have
             // static lifetimes so they live indefinitely.
@@ -115,6 +117,7 @@ impl<T, B: Backend> Lock<T, B> {
 
 impl<T: ?Sized, B: Backend> Lock<T, B> {
     /// Acquires the lock and gives the caller access to the data protected by it.
+    #[inline(always)]
     pub fn lock(&self) -> Guard<'_, T, B> {
         // SAFETY: The constructor of the type calls `init`, so the existence of the object proves
         // that `init` was called.
