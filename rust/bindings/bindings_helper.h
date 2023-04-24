@@ -11,6 +11,8 @@
 #include <linux/wait.h>
 #include <linux/sched.h>
 #include <linux/radix-tree.h>
+#include <linux/blk_types.h>
+#include <linux/blk-mq.h>
 
 /* `bindgen` gets confused at certain things. */
 const gfp_t BINDINGS_GFP_KERNEL = GFP_KERNEL;

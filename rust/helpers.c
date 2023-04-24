@@ -18,6 +18,7 @@
  * accidentally exposed.
  */
 
+#include <linux/bio.h>
 #include <linux/bug.h>
 #include <linux/build_bug.h>
 #include <linux/err.h>
@@ -28,6 +29,8 @@
 #include <linux/wait.h>
 #include <linux/radix-tree.h>
 #include <linux/highmem.h>
+#include <linux/blk-mq.h>
+#include <linux/blkdev.h>
 
 __noreturn void rust_helper_BUG(void)
 {
@@ -129,6 +132,25 @@ void rust_helper_put_task_struct(struct task_struct *t)
 	put_task_struct(t);
 }
 EXPORT_SYMBOL_GPL(rust_helper_put_task_struct);
+
+struct bio_vec rust_helper_req_bvec(struct request *rq)
+{
+	return req_bvec(rq);
+}
+EXPORT_SYMBOL_GPL(rust_helper_req_bvec);
+
+void *rust_helper_blk_mq_rq_to_pdu(struct request *rq)
+{
+	return blk_mq_rq_to_pdu(rq);
+}
+EXPORT_SYMBOL_GPL(rust_helper_blk_mq_rq_to_pdu);
+
+void rust_helper_bio_advance_iter_single(const struct bio *bio,
+                                         struct bvec_iter *iter,
+                                         unsigned int bytes) {
+  bio_advance_iter_single(bio, iter, bytes);
+}
+EXPORT_SYMBOL_GPL(rust_helper_bio_advance_iter_single);
 
 void rust_helper_init_radix_tree(struct xarray *tree, gfp_t gfp_mask)
 {
