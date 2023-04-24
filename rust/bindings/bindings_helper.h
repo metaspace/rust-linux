@@ -38,10 +38,12 @@
 
 /* `bindgen` gets confused at certain things. */
 const gfp_t BINDINGS_GFP_KERNEL = GFP_KERNEL;
+const gfp_t BINDINGS_GFP_ATOMIC = GFP_ATOMIC;
 const gfp_t BINDINGS___GFP_ZERO = __GFP_ZERO;
 const __poll_t BINDINGS_EPOLLIN = EPOLLIN;
 const __poll_t BINDINGS_EPOLLOUT = EPOLLOUT;
 const __poll_t BINDINGS_EPOLLERR = EPOLLERR;
 const __poll_t BINDINGS_EPOLLHUP = EPOLLHUP;
+const uint32_t BINDINGS_PAGE_SIZE = PAGE_SIZE;
 
 const loff_t BINDINGS_MAX_LFS_FILESIZE = MAX_LFS_FILESIZE;
