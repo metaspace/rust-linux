@@ -37,6 +37,7 @@ extern crate self as kernel;
 mod allocator;
 pub mod block;
 mod build_assert;
+mod cache_padded;
 pub mod error;
 pub mod init;
 pub mod ioctl;
@@ -56,6 +57,7 @@ pub mod types;
 
 #[doc(hidden)]
 pub use bindings;
+pub(crate) use cache_padded::CachePadded;
 pub use macros;
 pub use uapi;
 

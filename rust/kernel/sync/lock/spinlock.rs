@@ -4,7 +4,10 @@
 //!
 //! This module allows Rust code to use the kernel's `spinlock_t`.
 
+use core::ops::DerefMut;
+
 use crate::bindings;
+use crate::CachePadded;
 
 /// Creates a [`SpinLock`] initialiser with the given name and a newly-created lock class.
 ///
@@ -90,7 +93,7 @@ pub struct SpinLockBackend;
 // SAFETY: The underlying kernel `spinlock_t` object ensures mutual exclusion. `relock` uses the
 // default implementation that always calls the same locking method.
 unsafe impl super::Backend for SpinLockBackend {
-    type State = bindings::spinlock_t;
+    type State = CachePadded<bindings::spinlock_t>;
     type GuardState = ();
 
     unsafe fn init(
@@ -100,18 +103,20 @@ unsafe impl super::Backend for SpinLockBackend {
     ) {
         // SAFETY: The safety requirements ensure that `ptr` is valid for writes, and `name` and
         // `key` are valid for read indefinitely.
-        unsafe { bindings::__spin_lock_init(ptr, name, key) }
+        unsafe { bindings::__spin_lock_init((&mut *ptr).deref_mut(), name, key) }
     }
 
+    #[inline(always)]
     unsafe fn lock(ptr: *mut Self::State) -> Self::GuardState {
         // SAFETY: The safety requirements of this function ensure that `ptr` points to valid
         // memory, and that it has been initialised before.
-        unsafe { bindings::spin_lock(ptr) }
+        unsafe { bindings::spin_lock((&mut *ptr).deref_mut()) }
     }
 
+    #[inline(always)]
     unsafe fn unlock(ptr: *mut Self::State, _guard_state: &Self::GuardState) {
         // SAFETY: The safety requirements of this function ensure that `ptr` is valid and that the
         // caller is the owner of the mutex.
-        unsafe { bindings::spin_unlock(ptr) }
+        unsafe { bindings::spin_unlock((&mut *ptr).deref_mut()) }
     }
 }
