@@ -26,6 +26,7 @@
 #include <linux/spinlock.h>
 #include <linux/sched/signal.h>
 #include <linux/wait.h>
+#include <linux/radix-tree.h>
 
 __noreturn void rust_helper_BUG(void)
 {
@@ -127,6 +128,27 @@ void rust_helper_put_task_struct(struct task_struct *t)
 	put_task_struct(t);
 }
 EXPORT_SYMBOL_GPL(rust_helper_put_task_struct);
+
+void rust_helper_init_radix_tree(struct xarray *tree, gfp_t gfp_mask)
+{
+	INIT_RADIX_TREE(tree, gfp_mask);
+}
+EXPORT_SYMBOL_GPL(rust_helper_init_radix_tree);
+
+void **rust_helper_radix_tree_iter_init(struct radix_tree_iter *iter,
+					unsigned long start)
+{
+	return radix_tree_iter_init(iter, start);
+}
+EXPORT_SYMBOL_GPL(rust_helper_radix_tree_iter_init);
+
+void **rust_helper_radix_tree_next_slot(void **slot,
+					struct radix_tree_iter *iter,
+					unsigned flags)
+{
+	return radix_tree_next_slot(slot, iter, flags);
+}
+EXPORT_SYMBOL_GPL(rust_helper_radix_tree_next_slot);
 
 /*
  * We use `bindgen`'s `--size_t-is-usize` option to bind the C `size_t` type

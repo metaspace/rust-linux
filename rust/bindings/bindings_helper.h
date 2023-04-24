@@ -10,7 +10,9 @@
 #include <linux/refcount.h>
 #include <linux/wait.h>
 #include <linux/sched.h>
+#include <linux/radix-tree.h>
 
 /* `bindgen` gets confused at certain things. */
 const gfp_t BINDINGS_GFP_KERNEL = GFP_KERNEL;
+const gfp_t BINDINGS_GFP_ATOMIC = GFP_ATOMIC;
 const gfp_t BINDINGS___GFP_ZERO = __GFP_ZERO;
