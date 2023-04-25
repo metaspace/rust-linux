@@ -20,6 +20,9 @@ use core::{
     sync::atomic::{AtomicU64, Ordering},
 };
 
+use crate::block::bio::Bio;
+use crate::block::bio::BioIterator;
+
 /// A wrapper around a blk-mq `struct request`. This represents an IO request.
 ///
 /// # Implementation details
@@ -187,6 +190,25 @@ impl<T: Operations> Request<T> {
         }
     }
 
+    /// Get a wrapper for the first Bio in this request
+    #[inline(always)]
+    pub fn bio(&self) -> Option<&Bio> {
+        // SAFETY: By type invariant of `Self`, `self.0` is valid and the deref
+        // is safe.
+        let ptr = unsafe { (*self.0.get()).bio };
+        // SAFETY: By C API contract, if `bio` is not null it will have a
+        // positive refcount at least for the duration of the lifetime of
+        // `&self`.
+        unsafe { Bio::from_raw(ptr) }
+    }
+
+    /// Get an iterator over all bio structurs in this request
+    #[inline(always)]
+    pub fn bio_iter(&self) -> BioIterator<'_> {
+        BioIterator { bio: self.bio() }
+    }
+
+    // TODO: Check if inline is still required for cross language LTO inlining into module
     /// Get the target sector for the request
     #[inline(always)]
     pub fn sector(&self) -> usize {
