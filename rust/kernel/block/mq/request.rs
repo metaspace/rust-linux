@@ -11,6 +11,9 @@ use crate::{
 };
 use core::{marker::PhantomData, pin::Pin, ffi::c_void};
 
+use crate::block::bio::Bio;
+use crate::block::bio::BioIterator;
+
 /// A wrapper around a blk-mq `struct request`. This represents an IO request.
 pub struct Request<T: Operations> {
     ptr: *mut bindings::request,
@@ -60,6 +63,19 @@ impl<T: Operations> Request<T> {
         if !unsafe { bindings::blk_mq_complete_request_remote(self.ptr) } {
             T::complete(self);
         }
+    }
+
+    /// Get a wrapper for the first Bio in this request
+    #[inline(always)]
+    pub fn bio(&self) -> Option<Bio<'_>> {
+        let ptr = unsafe { (*self.ptr).bio };
+        unsafe { Bio::from_raw(ptr) }
+    }
+
+    /// Get an iterator over all bio structurs in this request
+    #[inline(always)]
+    pub fn bio_iter(&self) -> BioIterator<'_> {
+        BioIterator { bio: self.bio() }
     }
 
     /// Get the target sector for the request
