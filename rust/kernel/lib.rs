@@ -18,6 +18,7 @@
 #![feature(new_uninit)]
 #![feature(receiver_trait)]
 #![feature(unsize)]
+#![feature(const_mut_refs)]
 
 // Ensure conditional compilation based on the kernel configuration works;
 // otherwise we may silently break things like initcall handling.
@@ -37,6 +38,8 @@ pub mod init;
 pub mod ioctl;
 #[cfg(CONFIG_KUNIT)]
 pub mod kunit;
+#[doc(hidden)]
+pub mod module_param;
 pub mod pages;
 pub mod prelude;
 pub mod print;
