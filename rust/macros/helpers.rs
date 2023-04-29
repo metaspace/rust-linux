@@ -18,6 +18,16 @@ pub(crate) fn try_literal(it: &mut token_stream::IntoIter) -> Option<String> {
     }
 }
 
+pub(crate) fn try_byte_string(it: &mut token_stream::IntoIter) -> Option<String> {
+    try_literal(it).and_then(|byte_string| {
+        if byte_string.starts_with("b\"") && byte_string.ends_with('\"') {
+            Some(byte_string[2..byte_string.len() - 1].to_string())
+        } else {
+            None
+        }
+    })
+}
+
 pub(crate) fn try_string(it: &mut token_stream::IntoIter) -> Option<String> {
     try_literal(it).and_then(|string| {
         if string.starts_with('\"') && string.ends_with('\"') {
@@ -64,6 +74,10 @@ pub(crate) fn expect_group(it: &mut token_stream::IntoIter) -> Group {
     }
 }
 
+pub(crate) fn expect_literal(it: &mut token_stream::IntoIter) -> String {
+    try_literal(it).expect("Expected Literal")
+}
+
 pub(crate) fn expect_end(it: &mut token_stream::IntoIter) {
     if it.next().is_some() {
         panic!("Expected end");
@@ -73,6 +87,22 @@ pub(crate) fn expect_end(it: &mut token_stream::IntoIter) {
 pub(crate) struct Generics {
     pub(crate) impl_generics: Vec<TokenTree>,
     pub(crate) ty_generics: Vec<TokenTree>,
+}
+
+pub(crate) fn get_literal(it: &mut token_stream::IntoIter, expected_name: &str) -> String {
+    assert_eq!(expect_ident(it), expected_name);
+    assert_eq!(expect_punct(it), ':');
+    let literal = expect_literal(it);
+    assert_eq!(expect_punct(it), ',');
+    literal
+}
+
+pub(crate) fn get_string(it: &mut token_stream::IntoIter, expected_name: &str) -> String {
+    assert_eq!(expect_ident(it), expected_name);
+    assert_eq!(expect_punct(it), ':');
+    let string = expect_string(it);
+    assert_eq!(expect_punct(it), ',');
+    string
 }
 
 /// Parses the given `TokenStream` into `Generics` and the rest.
