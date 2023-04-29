@@ -91,6 +91,7 @@ impl<T: 'static> ForeignOwnable for Box<T> {
     type Borrowed<'a> = &'a T;
     type BorrowedMut<'a> = &'a mut T;
 
+    #[inline(always)]
     fn into_foreign(self) -> *const core::ffi::c_void {
         Box::into_raw(self) as _
     }
@@ -101,12 +102,14 @@ impl<T: 'static> ForeignOwnable for Box<T> {
         unsafe { Box::from_raw(ptr as _) }
     }
 
+    #[inline(always)]
     unsafe fn borrow<'a>(ptr: *const core::ffi::c_void) -> &'a T {
         // SAFETY: The safety requirements of this method ensure that the object remains alive and
         // immutable for the duration of 'a.
         unsafe { &*ptr.cast() }
     }
 
+    #[inline(always)]
     unsafe fn borrow_mut<'a>(ptr: *const core::ffi::c_void) -> &'a mut T {
         // SAFETY: The safety requirements of this method ensure that the pointer is valid and that
         // nothing else will access the value for the duration of 'a.
@@ -118,13 +121,17 @@ impl ForeignOwnable for () {
     type Borrowed<'a> = ();
     type BorrowedMut<'a> = ();
 
+    #[inline(always)]
     fn into_foreign(self) -> *const core::ffi::c_void {
         core::ptr::NonNull::dangling().as_ptr()
     }
 
     unsafe fn from_foreign(_: *const core::ffi::c_void) -> Self {}
 
+    #[inline(always)]
     unsafe fn borrow<'a>(_: *const core::ffi::c_void) -> Self::Borrowed<'a> {}
+
+    #[inline(always)]
     unsafe fn borrow_mut<'a>(_: *const core::ffi::c_void) -> Self::BorrowedMut<'a> {}
 }
 
