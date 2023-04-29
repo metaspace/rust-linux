@@ -70,10 +70,12 @@ pub trait ForeignOwnable: Sized {
 impl<T: 'static> ForeignOwnable for Box<T> {
     type Borrowed<'a> = &'a T;
 
+    #[inline(always)]
     fn into_foreign(self) -> *const core::ffi::c_void {
         Box::into_raw(self) as _
     }
 
+    #[inline(always)]
     unsafe fn borrow<'a>(ptr: *const core::ffi::c_void) -> &'a T {
         // SAFETY: The safety requirements for this function ensure that the object is still alive,
         // so it is safe to dereference the raw pointer.
@@ -82,6 +84,7 @@ impl<T: 'static> ForeignOwnable for Box<T> {
         unsafe { &*ptr.cast() }
     }
 
+    #[inline(always)]
     unsafe fn from_foreign(ptr: *const core::ffi::c_void) -> Self {
         // SAFETY: The safety requirements of this function ensure that `ptr` comes from a previous
         // call to `Self::into_foreign`.
@@ -92,12 +95,15 @@ impl<T: 'static> ForeignOwnable for Box<T> {
 impl ForeignOwnable for () {
     type Borrowed<'a> = ();
 
+    #[inline(always)]
     fn into_foreign(self) -> *const core::ffi::c_void {
         core::ptr::NonNull::dangling().as_ptr()
     }
 
+    #[inline(always)]
     unsafe fn borrow<'a>(_: *const core::ffi::c_void) -> Self::Borrowed<'a> {}
 
+    #[inline(always)]
     unsafe fn from_foreign(_: *const core::ffi::c_void) -> Self {}
 }
 

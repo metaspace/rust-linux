@@ -122,6 +122,7 @@ unsafe impl super::Backend for SpinLockBackend {
         None
     }
 
+    #[inline(always)]
     unsafe fn unlock(ptr: *mut Self::State, guard_state: &Self::GuardState) {
         match guard_state {
             // SAFETY: The safety requirements of this function ensure that `ptr` is valid and that
@@ -141,6 +142,7 @@ unsafe impl super::Backend for SpinLockBackend {
 // interrupt state, and the `irqrestore` variant of the lock release functions to restore the state
 // in `unlock` -- we use the guard context to determine which method was used to acquire the lock.
 unsafe impl super::IrqSaveBackend for SpinLockBackend {
+    #[inline(always)]
     unsafe fn lock_irqsave(ptr: *mut Self::State) -> Self::GuardState {
         // SAFETY: The safety requirements of this function ensure that `ptr` points to valid
         // memory, and that it has been initialised before.
