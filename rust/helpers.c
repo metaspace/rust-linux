@@ -25,6 +25,7 @@
 #include <linux/build_bug.h>
 #include <linux/err.h>
 #include <linux/errname.h>
+#include <linux/highmem.h>
 #include <linux/mutex.h>
 #include <linux/refcount.h>
 #include <linux/sched/signal.h>
@@ -143,6 +144,36 @@ struct kunit *rust_helper_kunit_get_current_test(void)
 	return kunit_get_current_test();
 }
 EXPORT_SYMBOL_GPL(rust_helper_kunit_get_current_test);
+
+void *rust_helper_kmap(struct page *page)
+{
+	return kmap(page);
+}
+EXPORT_SYMBOL_GPL(rust_helper_kmap);
+
+void rust_helper_kunmap(struct page *page)
+{
+	return kunmap(page);
+}
+EXPORT_SYMBOL_GPL(rust_helper_kunmap);
+
+void *rust_helper_kmap_atomic(struct page *page)
+{
+	return kmap_atomic(page);
+}
+EXPORT_SYMBOL_GPL(rust_helper_kmap_atomic);
+
+void rust_helper_kunmap_atomic(void *address)
+{
+	kunmap_atomic(address);
+}
+EXPORT_SYMBOL_GPL(rust_helper_kunmap_atomic);
+
+struct page *rust_helper_alloc_pages(gfp_t gfp_mask, unsigned int order)
+{
+	return alloc_pages(gfp_mask, order);
+}
+EXPORT_SYMBOL_GPL(rust_helper_alloc_pages);
 
 /*
  * `bindgen` binds the C `size_t` type as the Rust `usize` type, so we can
