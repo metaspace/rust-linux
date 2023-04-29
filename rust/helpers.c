@@ -27,6 +27,7 @@
 #include <linux/sched/signal.h>
 #include <linux/wait.h>
 #include <linux/radix-tree.h>
+#include <linux/highmem.h>
 
 __noreturn void rust_helper_BUG(void)
 {
@@ -149,6 +150,36 @@ void **rust_helper_radix_tree_next_slot(void **slot,
 	return radix_tree_next_slot(slot, iter, flags);
 }
 EXPORT_SYMBOL_GPL(rust_helper_radix_tree_next_slot);
+
+void *rust_helper_kmap(struct page *page)
+{
+	return kmap(page);
+}
+EXPORT_SYMBOL_GPL(rust_helper_kmap);
+
+void rust_helper_kunmap(struct page *page)
+{
+	return kunmap(page);
+}
+EXPORT_SYMBOL_GPL(rust_helper_kunmap);
+
+void *rust_helper_kmap_atomic(struct page *page)
+{
+	return kmap_atomic(page);
+}
+EXPORT_SYMBOL_GPL(rust_helper_kmap_atomic);
+
+void rust_helper_kunmap_atomic(void *address)
+{
+	kunmap_atomic(address);
+}
+EXPORT_SYMBOL_GPL(rust_helper_kunmap_atomic);
+
+struct page *rust_helper_alloc_pages(gfp_t gfp_mask, unsigned int order)
+{
+	return alloc_pages(gfp_mask, order);
+}
+EXPORT_SYMBOL_GPL(rust_helper_alloc_pages);
 
 /*
  * We use `bindgen`'s `--size_t-is-usize` option to bind the C `size_t` type
