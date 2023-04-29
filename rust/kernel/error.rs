@@ -245,6 +245,7 @@ pub type Result<T = (), E = Error> = core::result::Result<T, E>;
 
 /// Converts an integer as returned by a C kernel function to an error if it's negative, and
 /// `Ok(())` otherwise.
+#[inline(always)]
 pub fn to_result(err: core::ffi::c_int) -> Result {
     if err < 0 {
         Err(Error::from_errno(err))

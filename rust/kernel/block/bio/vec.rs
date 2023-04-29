@@ -61,6 +61,7 @@ impl Segment<'_> {
     /// Copy data to the page of this segment from `src`.
     ///
     /// Note: Disregards `self.offset()`
+    #[inline(always)]
     pub fn copy_from_folio(&mut self, src_folio: &UniqueFolio) -> Result {
         // SAFETY: self.bio_vec is valid and thus bv_page must be a valid
         // pointer to a `struct page`. We do not own the page, but we prevent
@@ -121,6 +122,7 @@ impl<'a> BioSegmentIterator<'a> {
     ///
     /// Caller must ensure that `self.iter.bi_size` > 0 before calling this
     /// method.
+    #[inline(always)]
     unsafe fn io_vec(&self) -> bindings::bio_vec {
         // SAFETY: By safety requirement of this function `self.iter.bi_size` is
         // greater than 0.

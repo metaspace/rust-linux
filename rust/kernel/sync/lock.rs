@@ -99,6 +99,7 @@ impl<T: ?Sized, B: IrqSaveBackend> Lock<T, B> {
     /// Before acquiring the lock, it disables interrupts. When the guard is dropped, the interrupt
     /// state (either enabled or disabled) is restored to its state before
     /// [`lock_irqsave`](Self::lock_irqsave) was called.
+    #[inline(always)]
     pub fn lock_irqsave(&self) -> Guard<'_, T, B> {
         // SAFETY: The constructor of the type calls `init`, so the existence of the object proves
         // that `init` was called.
@@ -206,6 +207,7 @@ impl<T: ?Sized, B: Backend> core::ops::DerefMut for Guard<'_, T, B> {
 }
 
 impl<T: ?Sized, B: Backend> Drop for Guard<'_, T, B> {
+    #[inline(always)]
     fn drop(&mut self) {
         // SAFETY: The caller owns the lock, so it is safe to unlock it.
         unsafe { B::unlock(self.lock.state.get(), &self.state) };

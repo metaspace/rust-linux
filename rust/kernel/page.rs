@@ -52,6 +52,7 @@ impl Page {
     }
 
     /// Returns a raw pointer to the page.
+    #[inline(always)]
     pub fn as_ptr(&self) -> *mut bindings::page {
         self.page.as_ptr()
     }
@@ -62,6 +63,7 @@ impl Page {
     ///
     /// Caller must own the page pointed to by `ptr` as these will be freed when
     /// the returned `Page` is dropped. `ptr` must point to a valid structure.
+    #[inline(always)]
     pub unsafe fn from_raw(ptr: *mut bindings::page) -> Self {
         Self {
             // SAFETY: By function safety requirements, ptr is not null

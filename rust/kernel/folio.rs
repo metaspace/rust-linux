@@ -26,6 +26,7 @@ unsafe impl AlwaysRefCounted for Folio {
         unsafe { bindings::folio_get(self.0.get()) };
     }
 
+    #[inline(always)]
     unsafe fn dec_ref(obj: ptr::NonNull<Self>) {
         // SAFETY: The safety requirements guarantee that the refcount is nonzero.
         unsafe { bindings::folio_put(obj.cast().as_ptr()) }
@@ -36,6 +37,7 @@ impl Folio {
     /// Tries to allocate a new folio.
     ///
     /// On success, returns a folio made up of 2^order pages.
+    #[inline(always)]
     pub fn try_new(order: u32) -> Result<UniqueFolio> {
         if order > bindings::MAX_PAGE_ORDER {
             return Err(EDOM);
