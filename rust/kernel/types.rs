@@ -9,6 +9,7 @@ use core::{
     marker::{PhantomData, PhantomPinned},
     mem::MaybeUninit,
     ops::{Deref, DerefMut},
+    pin::Pin,
     ptr::NonNull,
 };
 
@@ -133,6 +134,38 @@ impl ForeignOwnable for () {
 
     unsafe fn borrow<'a>(_: *const core::ffi::c_void) -> Self::Borrowed<'a> {}
     unsafe fn borrow_mut<'a>(_: *const core::ffi::c_void) -> Self::BorrowedMut<'a> {}
+}
+
+impl<T: ForeignOwnable + Deref> ForeignOwnable for Pin<T> {
+    const FOREIGN_ALIGN: usize = core::mem::align_of::<T>();
+
+    type Borrowed<'a> = T::Borrowed<'a>;
+    type BorrowedMut<'a> = T::BorrowedMut<'a>;
+
+    fn into_foreign(self) -> *const core::ffi::c_void {
+        // SAFETY: We continue to treat the pointer as pinned by returning just a pointer to it to
+        // the caller.
+        let inner = unsafe { Pin::into_inner_unchecked(self) };
+        inner.into_foreign()
+    }
+
+    unsafe fn borrow<'a>(ptr: *const core::ffi::c_void) -> Self::Borrowed<'a> {
+        // SAFETY: The safety requirements for this function are the same as the ones for
+        // `T::borrow`.
+        unsafe { T::borrow(ptr) }
+    }
+
+    unsafe fn borrow_mut<'a>(ptr: *const core::ffi::c_void) -> Self::BorrowedMut<'a> {
+        // SAFETY: The safety requirements for this function are the same as the ones for
+        // `T::borrow_mut`.
+        unsafe { T::borrow_mut(ptr) }
+    }
+
+    unsafe fn from_foreign(p: *const core::ffi::c_void) -> Self {
+        // SAFETY: The object was originally pinned.
+        // The passed pointer comes from a previous call to `T::into_foreign`.
+        unsafe { Pin::new_unchecked(T::from_foreign(p)) }
+    }
 }
 
 /// Runs a cleanup function/closure when dropped.
