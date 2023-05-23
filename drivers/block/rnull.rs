@@ -149,7 +149,7 @@ impl Operations for NullBlkDevice {
             let mut sector = rq.sector();
             for bio in rq.bio_iter() {
                 for mut segment in bio.segment_iter() {
-                    let _ = Self::transfer(rq.command(), &mut tree, sector, &mut segment);
+                    Self::transfer(rq.command(), &mut tree, sector, &mut segment)?;
                     sector += segment.len() >> 9; // TODO: SECTOR_SHIFT
                 }
             }
