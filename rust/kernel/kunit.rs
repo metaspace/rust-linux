@@ -40,6 +40,8 @@ pub fn info(args: fmt::Arguments<'_>) {
     }
 }
 
+use macros::kunit_tests;
+
 /// Asserts that a boolean expression is `true` at runtime.
 ///
 /// Public but hidden since it should only be used from generated tests.
@@ -257,4 +259,13 @@ macro_rules! kunit_unsafe_test_suite {
                 unsafe { KUNIT_TEST_SUITE.get() };
         };
     };
+}
+
+#[kunit_tests(rust_kernel_kunit)]
+mod tests {
+    #[test]
+    fn rust_test_kunit_kunit_tests() {
+        let running = true;
+        assert_eq!(running, true);
+    }
 }
