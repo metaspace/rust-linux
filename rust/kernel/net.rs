@@ -15,6 +15,7 @@ pub mod ip;
 #[cfg(CONFIG_RUST_PHYLIB_ABSTRACTIONS)]
 pub mod phy;
 pub mod socket;
+pub mod tcp;
 
 /// The address family.
 ///
