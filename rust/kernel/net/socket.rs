@@ -16,9 +16,14 @@ use super::*;
 use crate::error::{to_result, Result};
 use crate::net::addr::*;
 use crate::net::ip::IpProtocol;
+use crate::net::socket::opts::{OptionsLevel, WritableOption};
+use core::cmp::max;
+use core::marker::PhantomData;
 use flags::*;
+use kernel::net::socket::opts::SocketOption;
 
 pub mod flags;
+pub mod opts;
 
 /// The socket type.
 pub enum SockType {
@@ -470,6 +475,72 @@ impl Socket {
         };
         self.send_msg(bytes, message, flags)
     }
+
+    /// Sets an option on the socket.
+    ///
+    /// Wraps the `sock_setsockopt` function.
+    ///
+    /// The generic type `T` is the type of the option value.
+    /// See the [options module](opts) for the type and extra information about each option.
+    ///
+    /// Unfortunately, options can only be set but not retrieved.
+    /// This is because the kernel functions to retrieve options are not exported by the kernel.
+    /// The only exported functions accept user-space pointers, and are therefore not usable in the kernel.
+    ///
+    /// # Example
+    /// ```
+    /// use kernel::net::AddressFamily;
+    /// use kernel::net::ip::IpProtocol;use kernel::net::socket::{Socket, SockType};
+    /// use kernel::net::socket::opts;
+    ///
+    /// let socket = Socket::new(AddressFamily::Inet, SockType::Datagram, IpProtocol::Udp)?;
+    /// socket.set_option::<opts::ip::BindAddressNoPort>(true)?;
+    /// ```
+    pub fn set_option<O>(&self, value: impl Into<O::Type>) -> Result
+    where
+        O: SocketOption + WritableOption,
+    {
+        let value_ptr = SockPtr::new(&value);
+
+        // The minimum size is the size of an integer.
+        let min_size = core::mem::size_of::<core::ffi::c_int>();
+        let size = max(core::mem::size_of::<O::Type>(), min_size);
+
+        if O::level() == OptionsLevel::Socket && !self.has_flag(SocketFlag::CustomSockOpt) {
+            // SAFETY: FFI call;
+            // the address is valid for the lifetime of the wrapper;
+            // the size is at least the size of an integer;
+            // the level and name of the option are valid and coherent.
+            to_result(unsafe {
+                bindings::sock_setsockopt(
+                    self.0,
+                    O::level() as isize as _,
+                    O::value() as _,
+                    value_ptr.to_raw() as _,
+                    size as _,
+                )
+            })
+        } else {
+            // SAFETY: FFI call;
+            // the address is valid for the lifetime of the wrapper;
+            // the size is at least the size of an integer;
+            // the level and name of the option are valid and coherent.
+            to_result(unsafe {
+                (*(*self.0).ops)
+                    .setsockopt
+                    .map(|f| {
+                        f(
+                            self.0,
+                            O::level() as _,
+                            O::value() as _,
+                            value_ptr.to_raw() as _,
+                            size as _,
+                        )
+                    })
+                    .unwrap_or(-(bindings::EOPNOTSUPP as i32))
+            })
+        }
+    }
 }
 
 impl Drop for Socket {
@@ -546,5 +617,25 @@ impl From<MessageHeader> for bindings::msghdr {
     /// only by using directly the underlying `msghdr` structure.
     fn from(hdr: MessageHeader) -> Self {
         hdr.0
+    }
+}
+
+#[derive(Clone, Copy)]
+#[repr(transparent)]
+struct SockPtr<'a>(bindings::sockptr_t, PhantomData<&'a ()>);
+
+impl<'a> SockPtr<'a> {
+    fn new<T>(value: &'a T) -> Self
+    where
+        T: Sized,
+    {
+        let mut sockptr = bindings::sockptr_t::default();
+        sockptr.__bindgen_anon_1.kernel = value as *const T as _;
+        sockptr._bitfield_1 = bindings::__BindgenBitfieldUnit::new([1; 1usize]); // kernel ptr
+        SockPtr(sockptr, PhantomData)
+    }
+
+    fn to_raw(self) -> bindings::sockptr_t {
+        self.0
     }
 }
