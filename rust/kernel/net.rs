@@ -16,6 +16,7 @@ pub mod ip;
 pub mod phy;
 pub mod socket;
 pub mod tcp;
+pub mod udp;
 
 /// The address family.
 ///
