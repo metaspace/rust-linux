@@ -9,6 +9,8 @@
 
 use crate::error::{code, Error};
 use core::cell::UnsafeCell;
+
+pub mod addr;
 pub mod ip;
 #[cfg(CONFIG_RUST_PHYLIB_ABSTRACTIONS)]
 pub mod phy;
