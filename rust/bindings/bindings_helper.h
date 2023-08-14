@@ -11,11 +11,18 @@
 #include <linux/blk_types.h>
 #include <linux/errname.h>
 #include <linux/ethtool.h>
+#include <linux/inet.h>
+#include <linux/interrupt.h>
+#include <linux/io.h>
+#include <linux/irq.h>
 #include <linux/mdio.h>
+#include <linux/netfilter.h>
+#include <linux/pci.h>
 #include <linux/phy.h>
 #include <linux/refcount.h>
 #include <linux/sched.h>
 #include <linux/slab.h>
+#include <linux/tcp.h>
 #include <linux/wait.h>
 #include <linux/workqueue.h>
 
