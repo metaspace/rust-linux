@@ -39,6 +39,7 @@ pub mod driver;
 pub mod error;
 pub mod init;
 pub mod ioctl;
+pub mod irq;
 pub mod pages;
 pub mod prelude;
 pub mod print;
