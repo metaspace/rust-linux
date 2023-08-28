@@ -14,6 +14,8 @@
 #![no_std]
 #![feature(allocator_api)]
 #![feature(coerce_unsized)]
+#![feature(const_refs_to_cell)]
+#![feature(const_trait_impl)]
 #![feature(dispatch_from_dyn)]
 #![feature(new_uninit)]
 #![feature(receiver_trait)]
@@ -33,6 +35,7 @@ mod allocator;
 pub mod block;
 mod build_assert;
 pub mod device;
+pub mod driver;
 pub mod error;
 pub mod init;
 pub mod ioctl;
@@ -75,7 +78,7 @@ pub trait Module: Sized + Sync {
     /// should do.
     ///
     /// Equivalent to the `module_init` macro in the C API.
-    fn init(module: &'static ThisModule) -> error::Result<Self>;
+    fn init(name: &'static str::CStr, module: &'static ThisModule) -> error::Result<Self>;
 }
 
 /// Equivalent to `THIS_MODULE` in the C API.
