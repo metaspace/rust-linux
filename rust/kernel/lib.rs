@@ -40,6 +40,7 @@ pub mod error;
 pub mod init;
 pub mod io_mem;
 pub mod ioctl;
+pub mod irq;
 #[cfg(CONFIG_KUNIT)]
 pub mod kunit;
 #[cfg(CONFIG_NET)]
