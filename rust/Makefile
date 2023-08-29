@@ -12,6 +12,7 @@ RUST_HELPERS := \
 	build_bug \
 	device \
 	err \
+	io \
 	kunit \
 	mutex \
 	pci \

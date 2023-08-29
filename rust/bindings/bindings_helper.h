@@ -10,6 +10,7 @@
 #include <linux/device.h>
 #include <linux/errname.h>
 #include <linux/ethtool.h>
+#include <linux/io.h>
 #include <linux/jiffies.h>
 #include <linux/mdio.h>
 #include <linux/pci.h>
