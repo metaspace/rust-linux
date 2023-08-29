@@ -11,6 +11,7 @@
 #include <linux/blk-mq.h>
 #include <linux/device.h>
 #include <linux/errname.h>
+#include <linux/io.h>
 #include <linux/interrupt.h>
 #include <linux/irq.h>
 #include <linux/pci.h>

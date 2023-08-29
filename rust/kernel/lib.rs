@@ -40,6 +40,7 @@ pub mod device;
 pub mod driver;
 pub mod error;
 pub mod init;
+pub mod io_mem;
 pub mod ioctl;
 pub mod irq;
 #[cfg(CONFIG_KUNIT)]
