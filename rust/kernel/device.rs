@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0
+//
 
 //! Generic devices that are part of the kernel's driver model.
 //!
@@ -12,6 +13,7 @@ use crate::{
     init::InPlaceInit,
     init::PinInit,
     pin_init,
+    prelude::*,
     revocable::{Revocable, RevocableGuard},
     str::CStr,
     sync::{LockClassKey, RevocableMutex, UniqueArc},
@@ -49,6 +51,51 @@ pub unsafe trait RawDevice {
         // by the compiler because of their lifetimes).
         unsafe { CStr::from_char_ptr(name) }
     }
+
+    fn dma_set_mask(&self, mask: u64) -> Result {
+        let dev = self.raw_device();
+        let ret = unsafe { bindings::dma_set_mask(dev as _, mask) };
+        if ret != 0 {
+            Err(Error::from_errno(ret))
+        } else {
+            Ok(())
+        }
+    }
+
+    fn dma_set_coherent_mask(&self, mask: u64) -> Result {
+        let dev = self.raw_device();
+        let ret = unsafe { bindings::dma_set_coherent_mask(dev as _, mask) };
+        if ret != 0 {
+            Err(Error::from_errno(ret))
+        } else {
+            Ok(())
+        }
+    }
+
+    fn dma_map_sg(&self, sglist: &mut [bindings::scatterlist], dir: u32) -> Result {
+        let dev = self.raw_device();
+        let count = sglist.len().try_into()?;
+        let ret = unsafe {
+            bindings::dma_map_sg_attrs(
+                dev,
+                &mut sglist[0],
+                count,
+                dir,
+                bindings::DMA_ATTR_NO_WARN.into(),
+            )
+        };
+        // TODO: It may map fewer than what was requested. What happens then?
+        if ret == 0 {
+            return Err(EIO);
+        }
+        Ok(())
+    }
+
+    fn dma_unmap_sg(&self, sglist: &mut [bindings::scatterlist], dir: u32) {
+        let dev = self.raw_device();
+        let count = sglist.len() as _;
+        unsafe { bindings::dma_unmap_sg_attrs(dev, &mut sglist[0], count, dir, 0) };
+    }
 }
 
 /// A ref-counted device.
@@ -58,7 +105,8 @@ pub unsafe trait RawDevice {
 /// `ptr` is valid, non-null, and has a non-zero reference count. One of the references is owned by
 /// `self`, and will be decremented when `self` is dropped.
 pub struct Device {
-    pub(crate) ptr: *mut bindings::device,
+    // TODO: Make this pub(crate).
+    pub ptr: *mut bindings::device,
 }
 
 // SAFETY: `Device` only holds a pointer to a C device, which is safe to be used from any thread.
@@ -87,6 +135,16 @@ impl Device {
         // SAFETY: The requirements are satisfied by the existence of `RawDevice` and its safety
         // requirements.
         unsafe { Self::new(dev.raw_device()) }
+    }
+
+    // TODO: Review how this is used.
+    /// Creates a new `DeviceRef` from a device whose reference count has already been incremented.
+    /// The returned object takes over the reference, that is, the reference will be decremented
+    /// when the `DeviceRef` instance goes out of scope.
+    pub fn from_dev_no_reference(dev: &dyn RawDevice) -> Self {
+        Self {
+            ptr: dev.raw_device() as _,
+        }
     }
 }
 
