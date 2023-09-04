@@ -216,6 +216,12 @@ const char *rust_helper_dev_name(const struct device *dev)
 }
 EXPORT_SYMBOL_GPL(rust_helper_dev_name);
 
+unsigned int rust_helper_num_possible_cpus(void)
+{
+	return  num_possible_cpus();
+}
+EXPORT_SYMBOL_GPL(rust_helper_num_possible_cpus);
+
 void rust_helper_pci_set_drvdata(struct pci_dev *pdev, void *data)
 {
     pci_set_drvdata(pdev, data);
