@@ -11,6 +11,7 @@ use core::{
     ops::{Deref, DerefMut},
     pin::Pin,
     ptr::NonNull,
+    sync::atomic::{AtomicPtr, Ordering},
 };
 
 /// Used to transfer ownership to and from foreign (non-Rust) languages.
@@ -445,4 +446,54 @@ pub enum Either<L, R> {
 
     /// Constructs an instance of [`Either`] containing a value of type `R`.
     Right(R),
+}
+
+/// An optional atomic boxed value.
+pub struct AtomicOptionalBoxedPtr<T> {
+    ptr: AtomicPtr<T>,
+}
+
+impl<T> AtomicOptionalBoxedPtr<T> {
+    /// Creates a new instance with the given value.
+    pub fn new(value: Option<Box<T>>) -> Self {
+        Self {
+            ptr: AtomicPtr::new(Self::to_ptr(value)),
+        }
+    }
+
+    fn to_ptr(value: Option<Box<T>>) -> *mut T {
+        if let Some(v) = value {
+            Box::into_raw(v)
+        } else {
+            core::ptr::null_mut()
+        }
+    }
+
+    /// Swaps the existing boxed value with the given one.
+    pub fn swap(&self, value: Option<Box<T>>, order: Ordering) -> Option<Box<T>> {
+        let ptr = self.ptr.swap(Self::to_ptr(value), order);
+        if ptr.is_null() {
+            return None;
+        }
+        // SAFETY: All non-null values that are stored come from `Box::into_raw`. Additionally,
+        // they are always swapped by something else when read.
+        Some(unsafe { Box::from_raw(ptr) })
+    }
+
+    /// Stores a new value. The previous value is dropped.
+    pub fn store(&self, value: Option<Box<T>>, order: Ordering) {
+        self.swap(value, order);
+    }
+
+    /// Stores a new value and returns the old one.
+    pub fn take(&self, order: Ordering) -> Option<Box<T>> {
+        self.swap(None, order)
+    }
+}
+
+impl<T> Drop for AtomicOptionalBoxedPtr<T> {
+    fn drop(&mut self) {
+        // Noone else has a reference to this object.
+        self.take(Ordering::Relaxed);
+    }
 }
