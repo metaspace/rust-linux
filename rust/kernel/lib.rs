@@ -114,3 +114,9 @@ fn panic(info: &core::panic::PanicInfo<'_>) -> ! {
     // SAFETY: FFI call.
     unsafe { bindings::BUG() };
 }
+
+/// Returns maximum number of CPUs that may be online on the system.
+pub fn num_possible_cpus() -> u32 {
+    // SAFETY: FFI call with no additional requirements.
+    unsafe { bindings::num_possible_cpus() }
+}
