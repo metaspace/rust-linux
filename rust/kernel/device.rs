@@ -6,6 +6,9 @@
 
 use crate::{
     bindings,
+    error::Result,
+    error::Error,
+    error::code::EIO,
     types::{ARef, Opaque},
 };
 use core::{fmt, ptr};
@@ -185,6 +188,51 @@ impl Device {
                 &msg as *const _ as *const core::ffi::c_void,
             )
         };
+    }
+
+    pub fn dma_set_mask(&self, mask: u64) -> Result {
+        let dev = self.as_raw();
+        let ret = unsafe { bindings::dma_set_mask(dev as _, mask) };
+        if ret != 0 {
+            Err(Error::from_errno(ret))
+        } else {
+            Ok(())
+        }
+    }
+
+    pub fn dma_set_coherent_mask(&self, mask: u64) -> Result {
+        let dev = self.as_raw();
+        let ret = unsafe { bindings::dma_set_coherent_mask(dev as _, mask) };
+        if ret != 0 {
+            Err(Error::from_errno(ret))
+        } else {
+            Ok(())
+        }
+    }
+
+    pub fn dma_map_sg(&self, sglist: &mut [bindings::scatterlist], dir: u32) -> Result {
+        let dev = self.as_raw();
+        let count = sglist.len().try_into()?;
+        let ret = unsafe {
+            bindings::dma_map_sg_attrs(
+                dev,
+                &mut sglist[0],
+                count,
+                dir,
+                bindings::DMA_ATTR_NO_WARN.into(),
+            )
+        };
+        // TODO: It may map fewer than what was requested. What happens then?
+        if ret == 0 {
+            return Err(EIO);
+        }
+        Ok(())
+    }
+
+    pub fn dma_unmap_sg(&self, sglist: &mut [bindings::scatterlist], dir: u32) {
+        let dev = self.as_raw();
+        let count = sglist.len() as _;
+        unsafe { bindings::dma_unmap_sg_attrs(dev, &mut sglist[0], count, dir, 0) };
     }
 }
 
