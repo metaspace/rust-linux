@@ -2,12 +2,44 @@
 
 //! Allocator support.
 
+use core::alloc::AllocError;
 use core::alloc::{GlobalAlloc, Layout};
 use core::ptr;
+use core::ptr::NonNull;
 
 use crate::bindings;
 
-struct KernelAllocator;
+pub(crate) struct KernelAllocator;
+
+impl KernelAllocator {
+    #[cfg(not(test))]
+    #[cfg(not(testlib))]
+    pub(crate) fn allocate_with_flags(
+        &self,
+        layout: Layout,
+        flags: bindings::gfp_t,
+    ) -> Result<NonNull<[u8]>, AllocError> {
+        // `krealloc()` is used instead of `kmalloc()` because the latter is
+        // an inline function and cannot be bound to as a result.
+        let mem = unsafe { bindings::krealloc(ptr::null(), layout.size(), flags) as *mut u8 };
+        if mem.is_null() {
+            return Err(AllocError);
+        }
+        let mem = unsafe { core::slice::from_raw_parts_mut(mem, bindings::ksize(mem as _)) };
+        // Safety: checked for non null above
+        Ok(unsafe { NonNull::new_unchecked(mem) })
+    }
+
+    #[cfg(test)]
+    #[cfg(testlib)]
+    pub(crate) fn allocate_with_flags(
+        &self,
+        layout: Layout,
+        _flags: bindings::gfp_t,
+    ) -> Result<NonNull<[u8]>, AllocError> {
+        self.allocate(layout)
+    }
+}
 
 /// Calls `krealloc` with a proper size to alloc a new object aligned to `new_layout`'s alignment.
 ///
@@ -81,7 +113,7 @@ unsafe impl GlobalAlloc for KernelAllocator {
 }
 
 #[global_allocator]
-static ALLOCATOR: KernelAllocator = KernelAllocator;
+pub(crate) static ALLOCATOR: KernelAllocator = KernelAllocator;
 
 // See <https://github.com/rust-lang/rust/pull/86844>.
 #[no_mangle]
