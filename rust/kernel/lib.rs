@@ -38,6 +38,7 @@ mod allocator;
 pub mod block;
 mod build_assert;
 pub mod device;
+pub mod dma;
 pub mod driver;
 pub mod error;
 pub mod folio;
