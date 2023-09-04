@@ -16,6 +16,7 @@
 #include "io.c"
 #include "kunit.c"
 #include "mutex.c"
+#include "num_cpus.c"
 #include "page.c"
 #include "pci.c"
 #include "rbtree.c"
