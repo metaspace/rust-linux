@@ -32,6 +32,7 @@
 #include <linux/highmem.h>
 #include <linux/mutex.h>
 #include <linux/pci.h>
+#include <linux/rcupdate.h>
 #include <linux/refcount.h>
 #include <linux/sched/signal.h>
 #include <linux/spinlock.h>
@@ -345,6 +346,20 @@ void rust_helper_memcpy_fromio(void *to, const volatile void __iomem *from, long
 }
 EXPORT_SYMBOL_GPL(rust_helper_memcpy_fromio);
 /* end io.h */
+
+/* rcu */
+void rust_helper_rcu_read_lock(void)
+{
+	rcu_read_lock();
+}
+EXPORT_SYMBOL_GPL(rust_helper_rcu_read_lock);
+
+void rust_helper_rcu_read_unlock(void)
+{
+	rcu_read_unlock();
+}
+EXPORT_SYMBOL_GPL(rust_helper_rcu_read_unlock);
+/* end rcu */
 
 /*
  * `bindgen` binds the C `size_t` type as the Rust `usize` type, so we can
