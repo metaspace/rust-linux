@@ -8,8 +8,11 @@
 
 #include <kunit/test.h>
 #include <linux/blk-mq.h>
+#include <linux/blk-mq-pci.h>
 #include <linux/blk_types.h>
 #include <linux/blkdev.h>
+#include <linux/device.h>
+#include <linux/dmapool.h>
 #include <linux/errname.h>
 #include <linux/ethtool.h>
 #include <linux/firmware.h>
