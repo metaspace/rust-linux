@@ -127,5 +127,5 @@ mod tag_set;
 
 pub use gen_disk::GenDisk;
 pub use operations::Operations;
-pub use request::{Request, RequestDataRef};
+pub use request::{Request, RequestDataRef, RequestQueue};
 pub use tag_set::TagSet;
