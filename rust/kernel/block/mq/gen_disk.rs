@@ -137,6 +137,18 @@ impl<T: Operations> GenDisk<T> {
         unsafe { bindings::blk_queue_physical_block_size((*self.gendisk).queue, size) };
     }
 
+    pub fn set_queue_virt_boundary(&self, mask: usize) {
+        unsafe { bindings::blk_queue_virt_boundary((*self.gendisk).queue, mask as _) };
+    }
+
+    pub fn set_queue_max_hw_sectors(&self, max_hw_sectors: u32) {
+        unsafe { bindings::blk_queue_max_hw_sectors((*self.gendisk).queue, max_hw_sectors) };
+    }
+
+    pub fn set_queue_max_segments(&self, max_segments: u16) {
+        unsafe { bindings::blk_queue_max_segments((*self.gendisk).queue, max_segments) };
+    }
+
     /// Set the rotational media attribute for the device
     pub fn set_rotational(&self, rotational: bool) {
         if !rotational {
