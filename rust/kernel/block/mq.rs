@@ -13,5 +13,5 @@ mod tag_set;
 
 pub use gen_disk::GenDisk;
 pub use operations::Operations;
-pub use request::Request;
+pub use request::{Request, RequestQueue};
 pub use tag_set::TagSet;

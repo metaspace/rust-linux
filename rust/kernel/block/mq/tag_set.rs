@@ -17,6 +17,8 @@ use crate::{
 use core::{convert::TryInto, marker::PhantomData};
 use macros::{pin_data, pinned_drop};
 
+use super::Request;
+
 /// A wrapper for the C `struct blk_mq_tag_set`.
 ///
 /// `struct blk_mq_tag_set` contains a `struct list_head` and so must be pinned.
@@ -85,6 +87,17 @@ impl<T: Operations> TagSet<T> {
 
     pub(crate) unsafe fn from_ptr<'a>(ptr: *mut bindings::blk_mq_tag_set) -> &'a Self {
         unsafe { &*(ptr.cast::<Self>()) }
+    }
+
+    pub fn tag_to_rq(&self, qid: u32, tag: u32) -> Option<&Request<T>> {
+        // TODO: We have to check that qid doesn't overflow hw queue.
+        let tags = unsafe { *(*self.inner.get()).tags.add(qid as _) };
+        let rq_ptr = unsafe { bindings::blk_mq_tag_to_rq(tags, tag) };
+        if rq_ptr.is_null() {
+            None
+        } else {
+            Some(unsafe { Request::from_ptr_mut(rq_ptr) })
+        }
     }
 }
 

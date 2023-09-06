@@ -110,6 +110,10 @@ impl Segment<'_> {
         // `PAGE_SIZE` and this cannot go out of bounds
         unsafe { page.read_atomic(ptr, self.offset(), self.len()) }
     }
+
+    pub fn page(&self) -> *mut bindings::page {
+       self.bio_vec.bv_page
+    }
 }
 
 impl core::fmt::Display for Segment<'_> {
