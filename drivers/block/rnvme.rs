@@ -582,9 +582,9 @@ impl pci::Driver for NvmeDevice {
         dev.alloc_irq_vectors(1, 1, bindings::PCI_IRQ_ALL_TYPES)?;
 
         // TODO: Module parameter
-        let param_irq_queue_count = *nvme_irq_queue_count.read();
+        let param_irq_queue_count = *irq_queue_count.read();
         let param_poll_queue_count = *nvme_poll_queue_count.read();
-        let irq_queue_count : u32 = if param_irq_queue_count == -1 {
+        let irq_queue_count_ : u32 = if param_irq_queue_count == -1 {
             kernel::num_possible_cpus()
         } else {
             param_irq_queue_count as u32
@@ -598,7 +598,7 @@ impl pci::Driver for NvmeDevice {
 
         pr_info!(
             "queues irq/polled: {}/{}",
-            irq_queue_count,
+            irq_queue_count_,
             poll_queue_count
         );
 
@@ -636,7 +636,7 @@ impl pci::Driver for NvmeDevice {
                         io: Vec::new(),
                     }),
                 poll_queue_count: poll_queue_count,
-                irq_queue_count: irq_queue_count,
+                irq_queue_count: irq_queue_count_,
             }),
             "Nvme::Data"
         )?
@@ -705,7 +705,7 @@ module! {
     description: "NVMe PCI driver",
     license: "GPL v2",
     params: {
-        nvme_irq_queue_count: i64 {
+        irq_queue_count: i64 {
             default: 0,
             permissions: 0,
             description: "Number of irq queues (-1 means num_cpu)",
