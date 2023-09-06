@@ -24,6 +24,9 @@ pub struct GenDiskBuilder {
     logical_block_size: u32,
     physical_block_size: u32,
     capacity_sectors: u64,
+    virt_boundary_mask: u64,
+    max_segments: u16,
+    max_hw_sectors: u32,
 }
 
 impl Default for GenDiskBuilder {
@@ -33,6 +36,9 @@ impl Default for GenDiskBuilder {
             logical_block_size: bindings::PAGE_SIZE as u32,
             physical_block_size: bindings::PAGE_SIZE as u32,
             capacity_sectors: 0,
+            virt_boundary_mask: 0,
+            max_segments: 0,
+            max_hw_sectors: 0,
         }
     }
 }
@@ -93,6 +99,21 @@ impl GenDiskBuilder {
         self
     }
 
+    pub fn virt_boundary_mask(mut self, boundary_mask: u64) -> Self {
+        self.virt_boundary_mask = boundary_mask;
+        self
+    }
+
+    pub fn max_segments(mut self, segments: u16) -> Self {
+        self.max_segments = segments;
+        self
+    }
+
+    pub fn max_hw_sectors(mut self, sectors: u32) -> Self {
+        self.max_hw_sectors = sectors;
+        self
+    }
+
     /// Build a new `GenDisk` and add it to the VFS.
     pub fn build<T: Operations>(
         self,
@@ -107,6 +128,14 @@ impl GenDiskBuilder {
         });
 
         let lock_class_key = crate::sync::LockClassKey::new();
+
+
+        // SAFETY: `bindings::queue_limits` contain only fields that are valid when zeroed.
+        let mut lim: bindings::queue_limits = unsafe { core::mem::zeroed() };
+
+        lim.max_hw_sectors = self.max_hw_sectors;
+        lim.max_segments = self.max_segments;
+        lim.virt_boundary_mask = self.virt_boundary_mask;
 
         // SAFETY: `tagset.raw_tag_set()` points to a valid and initialized tag set
         let gendisk = from_err_ptr(unsafe {
