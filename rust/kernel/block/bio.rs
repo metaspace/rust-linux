@@ -30,7 +30,7 @@ impl<'a> Bio<'a> {
         BioSegmentIterator::new(self)
     }
 
-    /// Get a pointer to the `bio_vec` off this bio
+    /// Get a pointer to the `bio_vec` array off this bio
     #[inline(always)]
     fn io_vec(&self) -> *const bindings::bio_vec {
         // SAFETY: By type invariant, get_raw() returns a valid pointer to a
@@ -39,8 +39,9 @@ impl<'a> Bio<'a> {
     }
 
     /// Return a copy of the `bvec_iter` for this `Bio`
+    // TODO: Should not be pub
     #[inline(always)]
-    fn iter(&self) -> bindings::bvec_iter {
+    pub fn iter(&self) -> bindings::bvec_iter {
         // SAFETY: self.0 is always a valid pointer
         unsafe { (*self.get_raw()).bi_iter }
     }
