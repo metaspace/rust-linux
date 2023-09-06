@@ -459,6 +459,25 @@ void rust_helper_memcpy_fromio(void *to, const volatile void __iomem *from, long
 EXPORT_SYMBOL_GPL(rust_helper_memcpy_fromio);
 /* end io.h */
 
+struct request *rust_helper_blk_mq_tag_to_rq(struct blk_mq_tags *tags,
+					     unsigned int tag)
+{
+	return blk_mq_tag_to_rq(tags, tag);
+}
+EXPORT_SYMBOL_GPL(rust_helper_blk_mq_tag_to_rq);
+
+unsigned int rust_helper_blk_rq_payload_bytes(struct request *rq)
+{
+	return blk_rq_payload_bytes(rq);
+}
+EXPORT_SYMBOL_GPL(rust_helper_blk_rq_payload_bytes);
+
+unsigned short rust_helper_blk_rq_nr_phys_segments(struct request *rq)
+{
+	return blk_rq_nr_phys_segments(rq);
+}
+EXPORT_SYMBOL_GPL(rust_helper_blk_rq_nr_phys_segments);
+
 /*
  * `bindgen` binds the C `size_t` type as the Rust `usize` type, so we can
  * use it in contexts where Rust expects a `usize` like slice (array) indices.

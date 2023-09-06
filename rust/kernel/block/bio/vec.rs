@@ -74,6 +74,10 @@ impl Segment<'_> {
             })
         })
     }
+
+    pub fn page(&self) -> *mut bindings::page {
+       self.bio_vec.bv_page
+    }
 }
 
 impl core::fmt::Display for Segment<'_> {
