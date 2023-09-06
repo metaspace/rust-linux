@@ -36,7 +36,6 @@ pub trait Operations: Sized {
 
     /// Called by the kernel to get an initializer for a `Pin<&mut RequestData>`.
     fn new_request_data(
-        //rq: ARef<Request<Self>>,
         tagset_data: <Self::TagSetData as ForeignOwnable>::Borrowed<'_>,
     ) -> Self::RequestDataInit;
 
