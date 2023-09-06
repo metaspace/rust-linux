@@ -118,6 +118,10 @@ impl Segment<'_> {
 
         unsafe { page.read_atomic(ptr, self.offset(), self.len()) }
     }
+
+    pub fn page(&self) -> *mut bindings::page {
+       self.bio_vec.bv_page
+    }
 }
 
 impl core::fmt::Display for Segment<'_> {
