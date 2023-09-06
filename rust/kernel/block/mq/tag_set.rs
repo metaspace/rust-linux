@@ -13,6 +13,8 @@ use crate::{
 };
 use core::{cell::UnsafeCell, convert::TryInto, marker::PhantomData};
 
+use super::{RequestRef, Request};
+
 /// A wrapper for the C `struct blk_mq_tag_set`
 pub struct TagSet<T: Operations> {
     inner: UnsafeCell<bindings::blk_mq_tag_set>,
@@ -59,6 +61,18 @@ impl<T: Operations> TagSet<T> {
     /// Return the pointer to the wrapped `struct blk_mq_tag_set`
     pub(crate) fn raw_tag_set(&self) -> *mut bindings::blk_mq_tag_set {
         self.inner.get()
+    }
+
+
+    pub fn tag_to_rq(&self, qid: u32, tag: u32) -> Option<RequestRef<'_, T>> {
+        // TODO: We have to check that qid doesn't overflow hw queue.
+        let tags = unsafe { *(*self.inner.get()).tags.add(qid as _) };
+        let rq = unsafe { bindings::blk_mq_tag_to_rq(tags, tag) };
+        if rq.is_null() {
+            None
+        } else {
+            Some(unsafe {RequestRef::new(rq)})
+        }
     }
 }
 
