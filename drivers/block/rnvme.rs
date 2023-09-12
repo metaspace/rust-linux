@@ -581,7 +581,7 @@ impl pci::Driver for NvmeDevice {
         // We start off with just one vector. We increase it later.
         dev.alloc_irq_vectors(1, 1, bindings::PCI_IRQ_ALL_TYPES)?;
 
-        // TODO: Module parameter
+        // TODO: Cap at max hw queue count
         let param_irq_queue_count = *nvme_irq_queue_count.read();
         let param_poll_queue_count = *nvme_poll_queue_count.read();
         let irq_queue_count : u32 = if param_irq_queue_count == -1 {
