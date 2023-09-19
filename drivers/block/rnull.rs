@@ -137,8 +137,8 @@ impl Operations for NullBlkDevice {
 
     #[inline(always)]
     fn queue_rq(
-        _hw_data: <Self::HwData as ForeignOwnable>::Borrowed<'_>,
-        queue_data: <Self::QueueData as ForeignOwnable>::Borrowed<'_>,
+        _hw_data: (),
+        queue_data: &SpinLock<Tree>,
         rq: &mq::Request<Self>,
         _is_last: bool,
     ) -> Result {
