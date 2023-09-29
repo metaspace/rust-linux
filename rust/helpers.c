@@ -26,11 +26,15 @@
 #include <linux/blkdev.h>
 #include <linux/bug.h>
 #include <linux/build_bug.h>
+#include <linux/cacheflush.h>
 #include <linux/err.h>
 #include <linux/errname.h>
+//#include <linux/fs.h>
 #include <linux/highmem.h>
+#include <linux/mm.h>
 #include <linux/mutex.h>
 #include <linux/radix-tree.h>
+#include <linux/pagemap.h>
 #include <linux/refcount.h>
 #include <linux/sched/signal.h>
 #include <linux/spinlock.h>
@@ -163,6 +167,73 @@ void rust_helper_init_work_with_key(struct work_struct *work, work_func_t func,
 }
 EXPORT_SYMBOL_GPL(rust_helper_init_work_with_key);
 
+void rust_helper_folio_get(struct folio *folio)
+{
+	folio_get(folio);
+}
+EXPORT_SYMBOL_GPL(rust_helper_folio_get);
+
+void rust_helper_folio_put(struct folio *folio)
+{
+	folio_put(folio);
+}
+EXPORT_SYMBOL_GPL(rust_helper_folio_put);
+
+struct page *rust_helper_folio_page(struct folio *folio, size_t n)
+{
+	return folio_page(folio, n);
+}
+
+loff_t rust_helper_folio_pos(struct folio *folio)
+{
+	return folio_pos(folio);
+}
+EXPORT_SYMBOL_GPL(rust_helper_folio_pos);
+
+size_t rust_helper_folio_size(struct folio *folio)
+{
+	return folio_size(folio);
+}
+EXPORT_SYMBOL_GPL(rust_helper_folio_size);
+
+void rust_helper_folio_mark_uptodate(struct folio *folio)
+{
+	folio_mark_uptodate(folio);
+}
+EXPORT_SYMBOL_GPL(rust_helper_folio_mark_uptodate);
+
+void rust_helper_folio_set_error(struct folio *folio)
+{
+	folio_set_error(folio);
+}
+EXPORT_SYMBOL_GPL(rust_helper_folio_set_error);
+
+#ifndef CONFIG_NUMA
+struct folio* rust_helper_folio_alloc(gfp_t gfp, unsigned int order)
+{
+  return folio_alloc(gfp, order);
+}
+EXPORT_SYMBOL_GPL(rust_helper_folio_alloc);
+#endif
+
+void rust_helper_flush_dcache_folio(struct folio *folio)
+{
+	flush_dcache_folio(folio);
+}
+EXPORT_SYMBOL_GPL(rust_helper_flush_dcache_folio);
+
+void *rust_helper_kmap_local_folio(struct folio *folio, size_t offset)
+{
+	return kmap_local_folio(folio, offset);
+}
+EXPORT_SYMBOL_GPL(rust_helper_kmap_local_folio);
+
+void rust_helper_kunmap_local(const void *vaddr)
+{
+	kunmap_local(vaddr);
+}
+EXPORT_SYMBOL_GPL(rust_helper_kunmap_local);
+
 struct bio_vec rust_helper_req_bvec(struct request *rq)
 {
 	return req_bvec(rq);
@@ -289,6 +360,12 @@ int rust_helper_xa_err(void *entry)
 	return xa_err(entry);
 }
 EXPORT_SYMBOL_GPL(rust_helper_xa_err);
+
+void rust_helper_mapping_set_large_folios(struct address_space *mapping)
+{
+	mapping_set_large_folios(mapping);
+}
+EXPORT_SYMBOL_GPL(rust_helper_mapping_set_large_folios);
 
 /*
  * `bindgen` binds the C `size_t` type as the Rust `usize` type, so we can

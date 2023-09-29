@@ -10,8 +10,9 @@
 #include <linux/blk_types.h>
 #include <linux/blk-mq.h>
 #include <linux/errname.h>
-#include <linux/slab.h>
 #include <linux/radix-tree.h>
+#include <linux/slab.h>
+#include <linux/pagemap.h>
 #include <linux/refcount.h>
 #include <linux/wait.h>
 #include <linux/sched.h>
@@ -23,6 +24,10 @@ const size_t BINDINGS_ARCH_SLAB_MINALIGN = ARCH_SLAB_MINALIGN;
 const gfp_t BINDINGS_GFP_KERNEL = GFP_KERNEL;
 const gfp_t BINDINGS_GFP_ATOMIC = GFP_ATOMIC;
 const gfp_t BINDINGS___GFP_ZERO = __GFP_ZERO;
+
+const slab_flags_t BINDINGS_SLAB_RECLAIM_ACCOUNT = SLAB_RECLAIM_ACCOUNT;
+const slab_flags_t BINDINGS_SLAB_MEM_SPREAD = SLAB_MEM_SPREAD;
+const slab_flags_t BINDINGS_SLAB_ACCOUNT = SLAB_ACCOUNT;
 
 const gfp_t BINDINGS_XA_FLAGS_LOCK_IRQ = XA_FLAGS_LOCK_IRQ;
 const gfp_t BINDINGS_XA_FLAGS_LOCK_BH = XA_FLAGS_LOCK_BH;
@@ -39,3 +44,9 @@ const xa_mark_t BINDINGS_XA_MARK_2 = XA_MARK_2;
 const xa_mark_t BINDINGS_XA_PRESENT = XA_PRESENT;
 const xa_mark_t BINDINGS_XA_MARK_MAX = XA_MARK_MAX;
 const xa_mark_t BINDINGS_XA_FREE_MARK = XA_FREE_MARK;
+
+const unsigned long BINDINGS_SB_RDONLY = SB_RDONLY;
+
+const loff_t BINDINGS_MAX_LFS_FILESIZE = MAX_LFS_FILESIZE;
+
+const size_t BINDINGS_PAGE_SIZE = PAGE_SIZE;
