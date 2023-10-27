@@ -60,6 +60,7 @@ impl<T: Operations> Request<T> {
 
     /// Call this to schedule defered completion of the request
     // TODO: Consume rq so that we can't use it after completing it?
+    // TODO: Remove this
     pub fn complete(&self) {
         if !unsafe { bindings::blk_mq_complete_request_remote(self.ptr) } {
             T::complete(&unsafe { Self::from_ptr(self.ptr) });
