@@ -32,6 +32,12 @@ module! {
             permissions: 0,
             description: "Use memory backing",
         },
+        // Problems with pin_init when `irq_mode`
+        irq_mode_param: u8 {
+            default: 0,
+            permissions: 0,
+            description: "IRQ Mode (0: None, 1: SoftIRQ)",
+        },
         capacity_mib: u64 {
             default: 4096,
             permissions: 0,
@@ -40,13 +46,37 @@ module! {
     },
 }
 
+enum IRQMode {
+    None,
+    Soft,
+}
+
+impl TryFrom<u8> for IRQMode {
+    type Error = kernel::error::Error;
+
+    fn try_from(value: u8) -> Result<Self> {
+        match value {
+            0 => Ok(Self::None),
+            1 => Ok(Self::Soft),
+            _ => Err(kernel::error::code::EINVAL),
+        }
+    }
+}
+
 struct NullBlkModule {
     _disk: Pin<Box<Mutex<GenDisk<NullBlkDevice>>>>,
 }
 
 fn add_disk(tagset: Arc<TagSet<NullBlkDevice>>) -> Result<GenDisk<NullBlkDevice>> {
     let tree = RadixTree::new()?;
-    let queue_data = Box::pin_init(new_spinlock!(tree, "rnullb:mem"))?;
+    //
+
+    let queue_data = Box::pin_init(try_pin_init!(
+        QueueData {
+            tree <- new_spinlock!(tree, "rnullb:mem"),
+            irq_mode: (*irq_mode_param.read()).try_into()?,
+        }
+    ))?;
 
     let disk = GenDisk::try_new(tagset, queue_data)?;
     disk.set_name(format_args!("rnullb{}", 0))?;
@@ -60,13 +90,15 @@ fn add_disk(tagset: Arc<TagSet<NullBlkDevice>>) -> Result<GenDisk<NullBlkDevice>
 impl kernel::Module for NullBlkModule {
     fn init(_module: &'static ThisModule) -> Result<Self> {
         pr_info!("Rust null_blk loaded\n");
-        // Major device number?
+        // TODO: Major device number?
         let tagset = TagSet::try_new(1, (), 256, 1)?;
         let disk = Box::pin_init(new_mutex!(add_disk(tagset)?, "nullb:disk"))?;
 
         disk.lock().add()?;
 
-        Ok(Self { _disk: disk })
+        Ok(Self {
+            _disk: disk,
+        })
     }
 }
 
@@ -78,7 +110,13 @@ impl Drop for NullBlkModule {
 
 struct NullBlkDevice;
 type Tree = kernel::radix_tree::RadixTree<Box<Pages<0>>>;
-type Data = Pin<Box<SpinLock<Tree>>>;
+
+#[pin_data]
+struct QueueData {
+    #[pin]
+    tree: SpinLock<Tree>,
+    irq_mode: IRQMode,
+}
 
 impl NullBlkDevice {
     #[inline(always)]
@@ -125,7 +163,7 @@ impl NullBlkDevice {
 #[vtable]
 impl Operations for NullBlkDevice {
     type RequestData = ();
-    type QueueData = Data;
+    type QueueData = Pin<Box<QueueData>>;
     type HwData = ();
     type TagSetData = ();
 
@@ -138,13 +176,13 @@ impl Operations for NullBlkDevice {
     #[inline(always)]
     fn queue_rq(
         _hw_data: (),
-        queue_data: &SpinLock<Tree>,
+        queue_data: &QueueData,
         rq: &mq::Request<Self>,
         _is_last: bool,
     ) -> Result {
         rq.start();
         if *memory_backed.read() {
-            let mut tree = queue_data.lock_irqsave();
+            let mut tree = queue_data.tree.lock_irqsave();
 
             let mut sector = rq.sector();
             for bio in rq.bio_iter() {
@@ -154,7 +192,12 @@ impl Operations for NullBlkDevice {
                 }
             }
         }
-        rq.end_ok();
+
+        match queue_data.irq_mode {
+            IRQMode::None => rq.end_ok(),
+            IRQMode::Soft => rq.complete(),
+        }
+
         Ok(())
     }
 
@@ -164,8 +207,8 @@ impl Operations for NullBlkDevice {
     ) {
     }
 
-    fn complete(_rq: &mq::Request<Self>) {
-        //rq.end_ok();
+    fn complete(rq: &mq::Request<Self>) {
+        rq.end_ok();
     }
 
     fn init_hctx(
