@@ -8,8 +8,9 @@ use crate::{
     bindings,
     block::mq::Operations,
     error::{Error, Result},
+    types::AlwaysRefCounted,
 };
-use core::marker::PhantomData;
+use core::{marker::PhantomData, pin::Pin, ffi::c_void};
 
 use crate::block::bio::Bio;
 use crate::block::bio::BioIterator;
@@ -39,18 +40,17 @@ impl<T: Operations> Request<T> {
     }
 
     /// Call this to indicate to the kernel that the request has been completed without errors
-    // TODO: Consume rq so that we can't use it after ending it?
-    pub fn end_ok(&self) {
+    pub fn end_ok(self) {
         unsafe { bindings::blk_mq_end_request(self.ptr, bindings::BLK_STS_OK as _) };
     }
 
     /// Call this to indicate to the kernel that the request completed with an error
-    pub fn end_err(&self, err: Error) {
+    pub fn end_err(self, err: Error) {
         unsafe { bindings::blk_mq_end_request(self.ptr, err.to_blk_status()) };
     }
 
     /// Call this to indicate that the request completed with the status indicated by `status`
-    pub fn end(&self, status: Result) {
+    pub fn end(self, status: Result) {
         if let Err(e) = status {
             self.end_err(e);
         } else {
@@ -59,8 +59,7 @@ impl<T: Operations> Request<T> {
     }
 
     /// Call this to schedule defered completion of the request
-    // TODO: Consume rq so that we can't use it after completing it?
-    // TODO: Remove this
+    // TODO: Call C impl instead of duplicating
     pub fn complete(&self) {
         if !unsafe { bindings::blk_mq_complete_request_remote(self.ptr) } {
             T::complete(&unsafe { Self::from_ptr(self.ptr) });
@@ -84,5 +83,17 @@ impl<T: Operations> Request<T> {
     #[inline(always)]
     pub fn sector(&self) -> usize {
         unsafe { (*self.ptr).__sector as usize }
+    }
+
+    /// Returns the per-request data associated with this request
+    pub fn data(self) -> Pin<&'static mut T::RequestData> {
+        unsafe {
+            Pin::new_unchecked(&mut *(bindings::blk_mq_rq_to_pdu(self.ptr) as *mut T::RequestData))
+        }
+    }
+
+    pub fn request_from_pdu(pdu: Pin<&mut T::RequestData>) -> Self {
+        let inner = unsafe { Pin::into_inner_unchecked(pdu) };
+        unsafe { Self::from_ptr(bindings::blk_mq_rq_from_pdu(inner as *mut _ as *mut c_void)) }
     }
 }

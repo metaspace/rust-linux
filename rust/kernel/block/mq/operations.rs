@@ -8,16 +8,18 @@ use crate::{
     bindings,
     block::mq::{tag_set::TagSetRef, Request},
     error::{from_result, Result},
-    types::ForeignOwnable,
+    types::{ForeignOwnable, ARef}, init::PinInit,
 };
-use core::{marker::PhantomData, pin::Pin};
+use core::marker::PhantomData;
 
 /// Implement this trait to interface blk-mq as block devices
 #[macros::vtable]
 pub trait Operations: Sized {
     /// Data associated with a request. This data is located next to the request
     /// structure.
-    type RequestData;
+    type RequestData: Sized;
+
+    type RequestDataInit: PinInit<Self::RequestData>;
 
     /// Data associated with the `struct request_queue` that is allocated for
     /// the `GenDisk` associated with this `Operations` implementation.
@@ -31,26 +33,18 @@ pub trait Operations: Sized {
     /// blk_mq_tag_set`.
     type TagSetData: ForeignOwnable;
 
-    /// Called by the kernel to allocate a new `RequestData`. The structure will
-    /// eventually be pinned, so defer initialization to `init_request_data()`
+    /// Called by the kernel to get an initializer for a `Pin<&mut RequestData>`.
     fn new_request_data(
-        _tagset_data: <Self::TagSetData as ForeignOwnable>::Borrowed<'_>,
-    ) -> Result<Self::RequestData>;
-
-    /// Called by the kernel to initialize a previously allocated `RequestData`
-    fn init_request_data(
-        _tagset_data: <Self::TagSetData as ForeignOwnable>::Borrowed<'_>,
-        _data: Pin<&mut Self::RequestData>,
-    ) -> Result {
-        Ok(())
-    }
+        //rq: ARef<Request<Self>>,
+        tagset_data: <Self::TagSetData as ForeignOwnable>::Borrowed<'_>,
+    ) -> Self::RequestDataInit;
 
     /// Called by the kernel to queue a request with the driver. If `is_last` is
     /// `false`, the driver is allowed to defer commiting the request.
     fn queue_rq(
         hw_data: <Self::HwData as ForeignOwnable>::Borrowed<'_>,
         queue_data: <Self::QueueData as ForeignOwnable>::Borrowed<'_>,
-        rq: &Request<Self>,
+        rq: Request<Self>,
         is_last: bool,
     ) -> Result;
 
@@ -87,19 +81,22 @@ pub(crate) struct OperationsVtable<T: Operations>(PhantomData<T>);
 impl<T: Operations> OperationsVtable<T> {
     // # Safety
     //
-    // The caller of this function must ensure that `hctx` and `bd` are valid
-    // and initialized. The pointees must outlive this function. Further
-    // `hctx->driver_data` must be a pointer created by a call to
-    // `Self::init_hctx_callback()` and the pointee must outlive this function.
-    // This function must not be called with a `hctx` for which
-    // `Self::exit_hctx_callback()` has been called.
+    // - The caller of this function must ensure that `hctx` and `bd` are valid
+    //   and initialized. The pointees must outlive this function.
+    // - `hctx->driver_data` must be a pointer created by a call to
+    //   `Self::init_hctx_callback()` and the pointee must outlive this
+    //   function.
+    // - This function must not be called with a `hctx` for which
+    //   `Self::exit_hctx_callback()` has been called.
+    // - (*bd).rq must point to a valid `bindings:request` with a positive refcount in the `ref` field.
     unsafe extern "C" fn queue_rq_callback(
         hctx: *mut bindings::blk_mq_hw_ctx,
         bd: *const bindings::blk_mq_queue_data,
     ) -> bindings::blk_status_t {
         // SAFETY: `bd` is valid as required by the safety requirement for this function.
-        let rq = unsafe { (*bd).rq };
-
+        // TODO: Prevent incrementing refcount here
+        //let rq : ARef<Request<T>> = unsafe { (&Request::from_ptr((*bd).rq)).into() };
+        let rq = unsafe { Request::from_ptr((*bd).rq) };
         // SAFETY: The safety requirement for this function ensure that
         // `(*hctx).driver_data` was returned by a call to
         // `Self::init_hctx_callback()`. That function uses
@@ -120,11 +117,11 @@ impl<T: Operations> OperationsVtable<T> {
         // dropped, which happens after we are dropped.
         let queue_data = unsafe { T::QueueData::borrow(queue_data) };
 
-        // SAFETY: `bd` is valid as required by the safety requirement for this function.
         let ret = T::queue_rq(
             hw_data,
             queue_data,
-            &unsafe { Request::from_ptr(rq) },
+            rq,
+            // SAFETY: `bd` is valid as required by the safety requirement for this function.
             unsafe { (*bd).last },
         );
         if let Err(e) = ret {
@@ -193,14 +190,9 @@ impl<T: Operations> OperationsVtable<T> {
             let pdu = unsafe { bindings::blk_mq_rq_to_pdu(rq) } as *mut T::RequestData;
             let tagset_data = unsafe { T::TagSetData::borrow((*set).driver_data) };
 
-            let v = T::new_request_data(tagset_data)?;
-
-            // SAFETY: `pdu` memory is valid, as it was allocated by the caller.
-            unsafe { pdu.write(v) };
-
-            let tagset_data = unsafe { T::TagSetData::borrow((*set).driver_data) };
-            // SAFETY: `pdu` memory is valid and properly initialised.
-            T::init_request_data(tagset_data, unsafe { Pin::new_unchecked(&mut *pdu) })?;
+            //let rq : ARef<Request<T>> = unsafe { (&Request::from_ptr(rq)).into() };
+            let initializer = T::new_request_data(tagset_data);
+            unsafe { initializer.__pinned_init(pdu)? };
 
             Ok(0)
         })

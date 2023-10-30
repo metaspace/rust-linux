@@ -1,6 +1,7 @@
 
 #include <linux/bio.h>
 
+#if 0
 __attribute__((always_inline))
 void rust_helper_bio_advance_iter_single(const struct bio *bio,
                                            struct bvec_iter *iter, unsigned int bytes)
@@ -58,3 +59,4 @@ rust_helper_spin_unlock_irqrestore(spinlock_t *lock, unsigned long flags)
 {
 	spin_unlock_irqrestore(lock, flags);
 }
+#endif

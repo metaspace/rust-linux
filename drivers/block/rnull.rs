@@ -18,12 +18,12 @@ use kernel::{
     prelude::*,
     radix_tree::RadixTree,
     sync::{Arc, Mutex, SpinLock},
-    types::ForeignOwnable,
+    types::{ForeignOwnable, ARef}, hrtimer::TimerCallback, init::pin_init_from_closure,
 };
 
 module! {
     type: NullBlkModule,
-    name: "rs_null_blk",
+    name: "rnull_mod",
     author: "Andreas Hindborg",
     license: "GPL v2",
     params: {
@@ -36,7 +36,7 @@ module! {
         irq_mode_param: u8 {
             default: 0,
             permissions: 0,
-            description: "IRQ Mode (0: None, 1: SoftIRQ)",
+            description: "IRQ Mode (0: None, 1: Soft, 2: Timer)",
         },
         capacity_mib: u64 {
             default: 4096,
@@ -46,9 +46,11 @@ module! {
     },
 }
 
+#[derive(Debug)]
 enum IRQMode {
     None,
     Soft,
+    Timer,
 }
 
 impl TryFrom<u8> for IRQMode {
@@ -58,6 +60,7 @@ impl TryFrom<u8> for IRQMode {
         match value {
             0 => Ok(Self::None),
             1 => Ok(Self::Soft),
+            2 => Ok(Self::Timer),
             _ => Err(kernel::error::code::EINVAL),
         }
     }
@@ -160,24 +163,56 @@ impl NullBlkDevice {
     }
 }
 
+#[pin_data]
+struct Pdu {
+    #[pin]
+    timer: kernel::hrtimer::Timer<Self>,
+}
+
+impl TimerCallback for Pdu {
+    type Receiver<'a> = Pin<&'a mut Self>;
+
+    fn run<'a>(this: Self::Receiver<'a>) {
+        pr_info!("Run called\n");
+        mq::Request::<NullBlkDevice>::request_from_pdu(this).end_ok();
+    }
+}
+
+
+kernel::impl_has_timer! {
+    impl HasTimer<Self> for Pdu { self.timer }
+}
+
 #[vtable]
 impl Operations for NullBlkDevice {
-    type RequestData = ();
+    type RequestData = Pdu;
+    type RequestDataInit = impl PinInit<Pdu>;
     type QueueData = Pin<Box<QueueData>>;
     type HwData = ();
     type TagSetData = ();
 
     fn new_request_data(
         _tagset_data: <Self::TagSetData as ForeignOwnable>::Borrowed<'_>,
-    ) -> Result<Self::RequestData> {
-        Ok(())
+    ) -> Self::RequestDataInit {
+        pin_init!( Pdu {
+            timer <- kernel::hrtimer::Timer::new(),
+        })
     }
 
-    #[inline(always)]
+    // fn new_request_data(
+    //     rq: ARef<mq::Request<Self>>,
+    //     _tagset_data: <Self::TagSetData as ForeignOwnable>::Borrowed<'_>,
+    // ) -> Self::RequestDataInit {
+    //     unsafe {
+    //         kernel::init::pin_init_from_closure(|slot|Ok(()))
+    //     }
+    // }
+
+    #[inline(never)]
     fn queue_rq(
         _hw_data: (),
         queue_data: &QueueData,
-        rq: &mq::Request<Self>,
+        rq: mq::Request<Self>,
         _is_last: bool,
     ) -> Result {
         rq.start();
@@ -193,9 +228,15 @@ impl Operations for NullBlkDevice {
             }
         }
 
+        use kernel::hrtimer::RawTimer;
+
         match queue_data.irq_mode {
             IRQMode::None => rq.end_ok(),
-            IRQMode::Soft => rq.complete(),
+            IRQMode::Soft => todo!(),//rq.complete(),
+            IRQMode::Timer => {
+                let pdu = rq.data();
+                pdu.schedule(500_000_000);
+            },
         }
 
         Ok(())
@@ -208,7 +249,7 @@ impl Operations for NullBlkDevice {
     }
 
     fn complete(rq: &mq::Request<Self>) {
-        rq.end_ok();
+        //rq.end_ok();
     }
 
     fn init_hctx(
