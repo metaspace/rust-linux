@@ -38,6 +38,7 @@ mod build_assert;
 mod cache_padded;
 pub mod error;
 pub mod folio;
+pub mod hrtimer;
 pub mod init;
 pub mod ioctl;
 #[cfg(CONFIG_KUNIT)]
