@@ -35,6 +35,7 @@ mod allocator;
 pub mod block;
 mod build_assert;
 pub mod error;
+pub mod hrtimer;
 pub mod init;
 pub mod ioctl;
 #[cfg(CONFIG_KUNIT)]
