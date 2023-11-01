@@ -39,6 +39,7 @@ pub mod driver;
 pub mod error;
 #[cfg(CONFIG_RUST_FW_LOADER_ABSTRACTIONS)]
 pub mod firmware;
+pub mod hrtimer;
 pub mod init;
 pub mod ioctl;
 #[cfg(CONFIG_KUNIT)]
