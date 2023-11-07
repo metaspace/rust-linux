@@ -27,6 +27,9 @@ impl<T: TimerCallback> Timer<T> {
     pub fn new() -> impl PinInit<Self> {
         crate::pin_init!( Self {
             timer <- Opaque::ffi_init(move |slot: *mut bindings::hrtimer| {
+                // SAFETY: By design of `pin_init!`, `slot` is a pointer live
+                // allication. hrtimer_init will initialize `slot` and does not
+                // require `slot` to be initialized prior to the call.
                 unsafe {
                     bindings::hrtimer_init(
                         slot,
@@ -35,7 +38,12 @@ impl<T: TimerCallback> Timer<T> {
                     );
                 }
 
+                // SAFETY: `slot` is pointing to a live allocation, so the deref
+                // is safe. The `function` field might not be initialized, but
+                // `addr_of_mut` does not create a reference to the field.
                 let function: *mut Option<_> = unsafe { core::ptr::addr_of_mut!((*slot).function) };
+
+                // SAFETY: `function` points to a valid allocation.
                 unsafe { core::ptr::write(function, Some(T::Receiver::run)) };
             }),
             _t: PhantomData,
@@ -46,6 +54,8 @@ impl<T: TimerCallback> Timer<T> {
 #[pinned_drop]
 impl<T> PinnedDrop for Timer<T> {
     fn drop(self: Pin<&mut Self>) {
+        // SAFETY: By struct invariant `self.timer` points to a valid `struct
+        // hrtimer` instance and therefore this call is safe
         unsafe {
             bindings::hrtimer_cancel(self.timer.get());
         }
