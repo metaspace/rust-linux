@@ -200,6 +200,7 @@ struct page *rust_helper_folio_page(struct folio *folio, size_t n)
 {
 	return folio_page(folio, n);
 }
+EXPORT_SYMBOL_GPL(rust_helper_folio_page);
 
 loff_t rust_helper_folio_pos(struct folio *folio)
 {
