@@ -34,6 +34,7 @@ mod nvme_defs;
 mod nvme_driver_defs;
 mod nvme_mq;
 mod nvme_queue;
+pub mod nvme_regs;
 
 use nvme_defs::*;
 use nvme_driver_defs::*;
@@ -54,6 +55,7 @@ struct NvmeData {
 
 struct NvmeResources {
     bar: IoMem<8192>,
+    regs: nvme_regs::Nvme,
 }
 
 struct NvmeQueues {
@@ -188,7 +190,7 @@ impl NvmeDevice {
         // TODO: Check what else needs to happen from C side.
 
         // Initialise the queue depth.
-        let max_depth = (u64::from_le(dev.resources().unwrap().bar.readq(OFFSET_CAP)) & 0xffff) + 1;
+        let max_depth = u16::from_le(dev.resources().unwrap().regs.cap().read().mqes()) + 1;
         let q_depth = core::cmp::min(max_depth, 1024).try_into()?;
 
         pr_info!("HW queue depth: {}\n", q_depth);
@@ -300,8 +302,8 @@ impl NvmeDevice {
     fn wait_ready(dev: &Arc<DeviceData>) {
         pr_info!("Waiting for controller ready\n");
         {
-            let bar = &dev.resources().unwrap().bar;
-            while u32::from_le(bar.readl(OFFSET_CSTS)) & NVME_CSTS_RDY == 0 {
+            let regs = &dev.resources().unwrap().regs;
+            while !regs.csts().read().rdy() {
                 unsafe { bindings::mdelay(100) };
                 // TODO: Add check for fatal signal pending.
                 // TODO: Set timeout.
@@ -578,6 +580,7 @@ impl pci::Driver for NvmeDevice {
 
         let res = dev.take_resource(0).ok_or(ENXIO)?;
         let bar = unsafe { IoMem::<8192>::try_new(res) }?;
+        let regs = unsafe {nvme_regs::Nvme::from_ptr(bar.raw_ptr() as _ ) };
 
         // We start off with just one vector. We increase it later.
         dev.alloc_irq_vectors(1, 1, bindings::PCI_IRQ_ALL_TYPES)?;
@@ -608,6 +611,7 @@ impl pci::Driver for NvmeDevice {
         }
 
         let cap = u64::from_le(bar.readq(OFFSET_CAP));
+        let db_stride =  1usize << (regs.cap().read().dstrd() + 2);
         let device = Device::from_dev(dev);
         let pci_device = unsafe { pci::Device::from_ptr(dev.as_ptr()) };
         let dma_pool = dma::Pool::try_new(
@@ -621,10 +625,9 @@ impl pci::Driver for NvmeDevice {
 
         let mut data: Self::Data = kernel::new_device_data!(
             (),
-            NvmeResources { bar },
+            NvmeResources { bar, regs },
             pin_init!(NvmeData {
-                // TODO: Use typed register access
-                db_stride: 1 << (((cap >> 32) & 0xf) + 2),
+                db_stride,
                 dev: device,
                 pci_dev: pci_device,
                 instance: id,

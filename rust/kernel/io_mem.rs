@@ -165,6 +165,10 @@ impl<const SIZE: usize> IoMem<SIZE> {
         }
     }
 
+    pub fn raw_ptr(&self) -> *mut u8 {
+        self.ptr as _
+    }
+
     #[inline]
     const fn offset_ok<T>(offset: usize) -> bool {
         let type_size = core::mem::size_of::<T>();
