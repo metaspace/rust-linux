@@ -57,7 +57,7 @@ impl<T: Operations> GenDisk<T> {
             devnode: None,
             alternative_gpt_sector: None,
             get_unique_id: None,
-            owner: core::ptr::null_mut(),
+            owner: core::ptr::null_mut(), // TODO: Set to THIS_MODULE
             pr_ops: core::ptr::null_mut(),
             free_disk: None,
             poll_bio: None,
