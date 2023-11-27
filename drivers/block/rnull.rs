@@ -49,6 +49,11 @@ module! {
             permissions: 0,
             description: "Completion time in nano seconds for timer mode",
         },
+        param_block_size: u16 {
+            default: 4096,
+            permissions: 0,
+            description: "Block size in bytes",
+        },
     },
 }
 
@@ -79,20 +84,28 @@ struct NullBlkModule {
 fn add_disk(tagset: Arc<TagSet<NullBlkDevice>>) -> Result<GenDisk<NullBlkDevice>> {
     let tree = RadixTree::new()?;
 
+    let block_size = *param_block_size.read();
+    if block_size % 512 != 0 || block_size < 512 || block_size > 4096 {
+        return Err(kernel::error::code::EINVAL);
+    }
+
     let queue_data = Box::pin_init(try_pin_init!(
         QueueData {
             tree <- new_spinlock!(tree, "rnullb:mem"),
             completion_time_nsec: *param_completion_time_nsec.read(),
             irq_mode: (*param_irq_mode.read()).try_into()?,
             memory_backed: *param_memory_backed.read(),
+            block_size,
         }
     ))?;
+
+    let block_size = queue_data.block_size;
 
     let disk = GenDisk::try_new(tagset, queue_data)?;
     disk.set_name(format_args!("rnullb{}", 0))?;
     disk.set_capacity(*param_capacity_mib.read() << 11);
-    disk.set_queue_logical_block_size(4096);
-    disk.set_queue_physical_block_size(4096);
+    disk.set_queue_logical_block_size(block_size.into());
+    disk.set_queue_physical_block_size(block_size.into());
     disk.set_rotational(false);
     Ok(disk)
 }
@@ -126,6 +139,7 @@ struct QueueData {
     completion_time_nsec: u64,
     irq_mode: IRQMode,
     memory_backed: bool,
+    block_size: u16,
 }
 
 impl NullBlkDevice {
