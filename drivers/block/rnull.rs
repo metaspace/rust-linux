@@ -218,7 +218,7 @@ impl Operations for NullBlkDevice {
         })
     }
 
-    #[inline(never)]
+    #[inline(always)]
     fn queue_rq(
         _hw_data: (),
         queue_data: &QueueData,
