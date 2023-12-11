@@ -7,11 +7,11 @@
 use crate::{
     bindings,
     error::{to_result, Error, Result},
-    types::{ForeignOwnable, Opaque, ScopeGuard},
+    types::{ForeignOwnable, Opaque, ScopeGuard}, init::PinInit,
 };
 use core::{
     marker::{PhantomData, PhantomPinned},
-    ops::Deref,
+    ops::{Deref, DerefMut},
     pin::Pin,
     ptr::NonNull,
 };
@@ -60,6 +60,10 @@ impl<'a, T: ForeignOwnable> Guard<'a, T> {
         // remains in the `XArray`.
         unsafe { T::borrow(self.0.as_ptr() as _) }
     }
+
+    pub fn borrow_mut(&mut self) -> T::BorrowedMut<'_> {
+        unsafe { T::borrow_mut(self.0.as_ptr() as _) }
+    }
 }
 
 // Convenience impl for `ForeignOwnable` types whose `Borrowed`
@@ -73,6 +77,18 @@ where
 
     fn deref(&self) -> &Self::Target {
         self.borrow().into()
+    }
+}
+
+impl<'a, T: ForeignOwnable> DerefMut for Guard<'a, T>
+where
+    T::Borrowed<'a>: Deref,
+    T::BorrowedMut<'a>: DerefMut,
+    for<'b> T::Borrowed<'b>: Into<&'b <T::Borrowed<'a> as Deref>::Target>,
+    for<'b> T::BorrowedMut<'b>: Into<&'b mut <T::Borrowed<'a> as Deref>::Target>,
+{
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.borrow_mut().into()
     }
 }
 
