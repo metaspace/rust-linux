@@ -5,6 +5,9 @@
 //! load time by parameters `param_memory_backed`, `param_capacity_mib`,
 //! `param_irq_mode` and `param_completion_time_nsec!.
 
+#[cfg(CONFIG_BLK_DEV_RUST_NULL_XARRAY)]
+use core::ops::Deref;
+
 use kernel::{
     bindings,
     block::{
@@ -17,7 +20,6 @@ use kernel::{
     pages::Pages,
     pr_info,
     prelude::*,
-    radix_tree::RadixTree,
     sync::{Arc, Mutex, SpinLock},
     types::ForeignOwnable,
 };
@@ -82,7 +84,10 @@ struct NullBlkModule {
 }
 
 fn add_disk(tagset: Arc<TagSet<NullBlkDevice>>) -> Result<GenDisk<NullBlkDevice>> {
-    let tree = RadixTree::new()?;
+    #[cfg(not(CONFIG_BLK_DEV_RUST_NULL_XARRAY))]
+    let tree = kernel::radix_tree::RadixTree::new()?;
+    #[cfg(CONFIG_BLK_DEV_RUST_NULL_XARRAY)]
+    let tree = kernel::xarray::XArray::new(0);
 
     let block_size = *param_block_size.read();
     if block_size % 512 != 0 || block_size < 512 || block_size > 4096 {
@@ -130,7 +135,16 @@ impl Drop for NullBlkModule {
 }
 
 struct NullBlkDevice;
+
+#[cfg(not(CONFIG_BLK_DEV_RUST_NULL_XARRAY))]
 type Tree = kernel::radix_tree::RadixTree<Box<Pages<0>>>;
+#[cfg(not(CONFIG_BLK_DEV_RUST_NULL_XARRAY))]
+type TreeRef<'a> = &'a mut kernel::radix_tree::RadixTree<Box<Pages<0>>>;
+
+#[cfg(CONFIG_BLK_DEV_RUST_NULL_XARRAY)]
+type Tree = kernel::xarray::XArray<Box<Pages<0>>>;
+#[cfg(CONFIG_BLK_DEV_RUST_NULL_XARRAY)]
+type TreeRef<'a> = Pin<&'a kernel::xarray::XArray<Box<Pages<0>>>>;
 
 #[pin_data]
 struct QueueData {
@@ -144,13 +158,22 @@ struct QueueData {
 
 impl NullBlkDevice {
     #[inline(always)]
-    fn write(tree: &mut Tree, sector: usize, segment: &Segment<'_>) -> Result {
+    fn write(tree: TreeRef<'_>, sector: usize, segment: &Segment<'_>) -> Result {
         let idx = sector >> 3; // TODO: PAGE_SECTOR_SHIFT
+        #[cfg(not(CONFIG_BLK_DEV_RUST_NULL_XARRAY))]
         let mut page = if let Some(page) = tree.get_mut(idx as u64) {
             page
         } else {
             tree.try_insert(idx as u64, Box::try_new(Pages::new()?)?)?;
             tree.get_mut(idx as u64).unwrap()
+        };
+
+        #[cfg(CONFIG_BLK_DEV_RUST_NULL_XARRAY)]
+        let mut page = if let Some(page) = tree.as_ref().get(idx) {
+            page
+        } else {
+            tree.set(idx, Box::try_new(Pages::new()?)?)?;
+            tree.get(idx).unwrap()
         };
 
         segment.copy_to_page_atomic(&mut page)?;
@@ -159,9 +182,18 @@ impl NullBlkDevice {
     }
 
     #[inline(always)]
-    fn read(tree: &mut Tree, sector: usize, segment: &mut Segment<'_>) -> Result {
+    fn read(tree: TreeRef<'_>, sector: usize, segment: &mut Segment<'_>) -> Result {
         let idx = sector >> 3; // TODO: PAGE_SECTOR_SHIFT
-        if let Some(page) = tree.get(idx as u64) {
+
+        #[cfg(not(CONFIG_BLK_DEV_RUST_NULL_XARRAY))]
+        let page = tree.get(idx as u64);
+
+        #[cfg(CONFIG_BLK_DEV_RUST_NULL_XARRAY)]
+        let page = tree.get(idx);
+
+        if let Some(page) = page {
+            #[cfg(CONFIG_BLK_DEV_RUST_NULL_XARRAY)]
+            let page = page.deref();
             segment.copy_from_page_atomic(page)?;
         }
 
@@ -171,7 +203,7 @@ impl NullBlkDevice {
     #[inline(never)]
     fn transfer(
         command: bindings::req_op,
-        tree: &mut Tree,
+        tree: TreeRef<'_>,
         sector: usize,
         segment: &mut Segment<'_>,
     ) -> Result {
@@ -227,12 +259,23 @@ impl Operations for NullBlkDevice {
     ) -> Result {
         rq.start();
         if queue_data.memory_backed {
+
+            #[cfg(not(CONFIG_BLK_DEV_RUST_NULL_XARRAY))]
             let mut tree = queue_data.tree.lock_irqsave();
+            #[cfg(not(CONFIG_BLK_DEV_RUST_NULL_XARRAY))]
+            let tree = &mut tree;
+
+            #[cfg(CONFIG_BLK_DEV_RUST_NULL_XARRAY)]
+            let tree = queue_data.tree.lock_irqsave();
+
+            // TODO: This unsafe goes away when xarray implements PinInit
+            #[cfg(CONFIG_BLK_DEV_RUST_NULL_XARRAY)]
+            let tree = unsafe { Pin::new_unchecked(tree.deref()) } ;
 
             let mut sector = rq.sector();
             for bio in rq.bio_iter() {
                 for mut segment in bio.segment_iter() {
-                    Self::transfer(rq.command(), &mut tree, sector, &mut segment)?;
+                    Self::transfer(rq.command(), tree, sector, &mut segment)?;
                     sector += segment.len() >> 9; // TODO: SECTOR_SHIFT
                 }
             }
