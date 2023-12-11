@@ -354,7 +354,7 @@ config VIRTIO_BLK
 	  This is the virtual block driver for virtio.  It can be used with
           QEMU based VMMs (like KVM or Xen).  Say Y or M.
 
-config BLK_DEV_RS_NULL
+config BLK_DEV_RUST_NULL
 	tristate "Rust null block driver"
 	depends on RUST
 
