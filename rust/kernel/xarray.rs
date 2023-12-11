@@ -10,7 +10,14 @@ use crate::{
     prelude::*,
     types::{ForeignOwnable, Opaque, ScopeGuard},
 };
-use core::{ffi::c_ulong, marker::PhantomData, mem, ops::Deref, ptr::NonNull};
+use core::{
+    ffi::c_ulong,
+    marker::PhantomData,
+    mem,
+    ops::{Deref, DerefMut},
+    pin::Pin,
+    ptr::NonNull,
+};
 
 /// Flags passed to `XArray::new` to configure the `XArray`.
 type Flags = bindings::gfp_t;
@@ -75,6 +82,20 @@ impl<'a, T: ForeignOwnable> Guard<'a, T> {
         // (`self.0`).
         unsafe { T::borrow(self.0.as_ptr().cast()) }
     }
+
+    /// Mutably borrow the underlying value wrapped by the `Guard`.
+    ///
+    /// Returns a `T::BorrowedMut` type for the owned `ForeignOwnable` type.
+    pub fn borrow_mut(&mut self) -> T::BorrowedMut<'_> {
+        // SAFETY: `self.0` was produced by a call to `into_foreign` when it was
+        // inserted into the `XArray`. Because obtaining a `Guard` for the
+        // underlying value requires taking a lock, this is the only guard in
+        // existence for the value pointed to by `self.0`. Becuase of the
+        // existence of `&'a mut self` and the transfer of the lifetime `'a` to
+        // the return type of this function, the value returned by `borrow_mut`
+        // cannot overlap with other calls to `borrow` or `borrow_mut`.
+        unsafe { T::borrow_mut(self.0.as_ptr() as _) }
+    }
 }
 
 // Convenience impl for `ForeignOwnable` types whose `Borrowed`
@@ -88,6 +109,20 @@ where
 
     fn deref(&self) -> &Self::Target {
         self.borrow().into()
+    }
+}
+
+// Convenience impl for `ForeignOwnable` types whose `Borrowed` form implements
+// `DerefMut`
+impl<'a, T: ForeignOwnable> DerefMut for Guard<'a, T>
+where
+    T::Borrowed<'a>: Deref,
+    T::BorrowedMut<'a>: DerefMut,
+    for<'b> T::Borrowed<'b>: Into<&'b <T::Borrowed<'a> as Deref>::Target>,
+    for<'b> T::BorrowedMut<'b>: Into<&'b mut <T::Borrowed<'a> as Deref>::Target>,
+{
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.borrow_mut().into()
     }
 }
 
