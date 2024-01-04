@@ -5,7 +5,6 @@
 //! load time by parameters `param_memory_backed`, `param_capacity_mib`,
 //! `param_irq_mode` and `param_completion_time_nsec!.
 
-#[cfg(CONFIG_BLK_DEV_RUST_NULL_XARRAY)]
 use core::ops::Deref;
 
 use kernel::{
@@ -84,9 +83,6 @@ struct NullBlkModule {
 }
 
 fn add_disk(tagset: Arc<TagSet<NullBlkDevice>>) -> Result<GenDisk<NullBlkDevice>> {
-    #[cfg(not(CONFIG_BLK_DEV_RUST_NULL_XARRAY))]
-    let tree = kernel::radix_tree::RadixTree::new()?;
-    #[cfg(CONFIG_BLK_DEV_RUST_NULL_XARRAY)]
     let tree = kernel::xarray::XArray::new(0);
 
     let block_size = *param_block_size.read();
@@ -136,15 +132,8 @@ impl Drop for NullBlkModule {
 
 struct NullBlkDevice;
 
-#[cfg(not(CONFIG_BLK_DEV_RUST_NULL_XARRAY))]
-type Tree = kernel::radix_tree::RadixTree<Box<Pages<0>>>;
-#[cfg(not(CONFIG_BLK_DEV_RUST_NULL_XARRAY))]
-type TreeRef<'a> = &'a mut kernel::radix_tree::RadixTree<Box<Pages<0>>>;
-
-#[cfg(CONFIG_BLK_DEV_RUST_NULL_XARRAY)]
 type Tree = kernel::xarray::XArray<Box<Pages<0>>>;
-#[cfg(CONFIG_BLK_DEV_RUST_NULL_XARRAY)]
-type TreeRef<'a> = Pin<&'a kernel::xarray::XArray<Box<Pages<0>>>>;
+type TreeRef<'a> = Pin<&'a Tree>;
 
 #[pin_data]
 struct QueueData {
@@ -160,15 +149,7 @@ impl NullBlkDevice {
     #[inline(always)]
     fn write(tree: TreeRef<'_>, sector: usize, segment: &Segment<'_>) -> Result {
         let idx = sector >> 3; // TODO: PAGE_SECTOR_SHIFT
-        #[cfg(not(CONFIG_BLK_DEV_RUST_NULL_XARRAY))]
-        let mut page = if let Some(page) = tree.get_mut(idx as u64) {
-            page
-        } else {
-            tree.try_insert(idx as u64, Box::try_new(Pages::new()?)?)?;
-            tree.get_mut(idx as u64).unwrap()
-        };
 
-        #[cfg(CONFIG_BLK_DEV_RUST_NULL_XARRAY)]
         let mut page = if let Some(page) = tree.as_ref().get(idx) {
             page
         } else {
@@ -185,16 +166,8 @@ impl NullBlkDevice {
     fn read(tree: TreeRef<'_>, sector: usize, segment: &mut Segment<'_>) -> Result {
         let idx = sector >> 3; // TODO: PAGE_SECTOR_SHIFT
 
-        #[cfg(not(CONFIG_BLK_DEV_RUST_NULL_XARRAY))]
-        let page = tree.get(idx as u64);
-
-        #[cfg(CONFIG_BLK_DEV_RUST_NULL_XARRAY)]
-        let page = tree.get(idx);
-
-        if let Some(page) = page {
-            #[cfg(CONFIG_BLK_DEV_RUST_NULL_XARRAY)]
-            let page = page.deref();
-            segment.copy_from_page_atomic(page)?;
+        if let Some(page) = tree.get(idx) {
+            segment.copy_from_page_atomic(page.deref())?;
         }
 
         Ok(())
@@ -259,18 +232,10 @@ impl Operations for NullBlkDevice {
     ) -> Result {
         rq.start();
         if queue_data.memory_backed {
-
-            #[cfg(not(CONFIG_BLK_DEV_RUST_NULL_XARRAY))]
-            let mut tree = queue_data.tree.lock_irqsave();
-            #[cfg(not(CONFIG_BLK_DEV_RUST_NULL_XARRAY))]
-            let tree = &mut tree;
-
-            #[cfg(CONFIG_BLK_DEV_RUST_NULL_XARRAY)]
             let tree = queue_data.tree.lock_irqsave();
 
             // TODO: This unsafe goes away when xarray implements PinInit
-            #[cfg(CONFIG_BLK_DEV_RUST_NULL_XARRAY)]
-            let tree = unsafe { Pin::new_unchecked(tree.deref()) } ;
+            let tree = unsafe { Pin::new_unchecked(tree.deref()) };
 
             let mut sector = rq.sector();
             for bio in rq.bio_iter() {
