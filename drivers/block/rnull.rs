@@ -16,7 +16,7 @@ use kernel::{
     error::Result,
     hrtimer::{RawTimer, TimerCallback},
     new_mutex, new_spinlock,
-    pages::Pages,
+    folio::*,
     pr_info,
     prelude::*,
     sync::{Arc, Mutex, SpinLock},
@@ -132,7 +132,7 @@ impl Drop for NullBlkModule {
 
 struct NullBlkDevice;
 
-type Tree = kernel::xarray::XArray<Box<Pages<0>>>;
+type Tree = kernel::xarray::XArray<Box<UniqueFolio>>;
 type TreeRef<'a> = Pin<&'a Tree>;
 
 #[pin_data]
@@ -150,14 +150,14 @@ impl NullBlkDevice {
     fn write(tree: TreeRef<'_>, sector: usize, segment: &Segment<'_>) -> Result {
         let idx = sector >> 3; // TODO: PAGE_SECTOR_SHIFT
 
-        let mut page = if let Some(page) = tree.as_ref().get(idx) {
+        let mut folio = if let Some(page) = tree.as_ref().get(idx) {
             page
         } else {
-            tree.set(idx, Box::try_new(Pages::new()?)?)?;
+            tree.set(idx, Box::try_new(Folio::try_new(0)?)?)?;
             tree.get(idx).unwrap()
         };
 
-        segment.copy_to_page_atomic(&mut page)?;
+        segment.copy_to_folio(&mut folio)?;
 
         Ok(())
     }
@@ -166,8 +166,8 @@ impl NullBlkDevice {
     fn read(tree: TreeRef<'_>, sector: usize, segment: &mut Segment<'_>) -> Result {
         let idx = sector >> 3; // TODO: PAGE_SECTOR_SHIFT
 
-        if let Some(page) = tree.get(idx) {
-            segment.copy_from_page_atomic(page.deref())?;
+        if let Some(folio) = tree.get(idx) {
+            segment.copy_from_folio(folio.deref())?;
         }
 
         Ok(())
