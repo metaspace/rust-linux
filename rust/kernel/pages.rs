@@ -173,6 +173,19 @@ impl Pages<0> {
     pub unsafe fn write_local(&self, src: *const u8, offset: usize, len: usize) -> Result {
         unsafe { self.write_internal::<LocalMappingInfo>(src, offset, len) }
     }
+
+    /// Copy src into `self`.
+    pub fn copy_from_slice(&mut self, src: &[u8]) -> Result {
+
+        if src.len() as u32 > PAGE_SIZE {
+            return Err(EINVAL);
+        }
+
+        // SAFETY: By the implementation of `slice` the pointer passed to
+        // `write_local()` is valid for read for `src.len()` bytes.
+        unsafe { self.write_local(src.as_ptr(), 0, src.len()) }
+    }
+
     /// Maps the page at index 0.
     #[inline(always)]
     pub fn kmap(&self) -> PageMapping<'_, NormalMappingInfo> {
