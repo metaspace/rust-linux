@@ -222,6 +222,12 @@ void rust_helper_flush_dcache_folio(struct folio *folio)
 }
 EXPORT_SYMBOL_GPL(rust_helper_flush_dcache_folio);
 
+void *rust_helper_kmap_local_page(struct page *page)
+{
+	return kmap_local_page(page);
+}
+EXPORT_SYMBOL_GPL(rust_helper_kmap_local_page);
+
 void *rust_helper_kmap_local_folio(struct folio *folio, size_t offset)
 {
 	return kmap_local_folio(folio, offset);
