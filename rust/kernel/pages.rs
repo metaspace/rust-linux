@@ -158,6 +158,21 @@ impl Pages<0> {
         unsafe { self.write_internal::<AtomicMappingInfo>(src, offset, len) }
     }
 
+    /// Maps the pages locally and writes `len` bytes from `src` starting at
+    /// offset `offset` the mapped page.
+    ///
+    /// # Safety
+    ///
+    /// Callers must ensure that the buffer pointed to by `src` is valid for
+    /// read for `len` bytes. Additionally, if the page is (or will be) mapped
+    /// by userspace, they must ensure that no kernel data is leaked through
+    /// padding if it was cast from another type;
+    /// [`crate::io_buffer::WritableToBytes`] has more details about it. `src`
+    /// may not overlap the destination page.
+    #[inline(always)]
+    pub unsafe fn write_local(&self, src: *const u8, offset: usize, len: usize) -> Result {
+        unsafe { self.write_internal::<LocalMappingInfo>(src, offset, len) }
+    }
     /// Maps the page at index 0.
     #[inline(always)]
     pub fn kmap(&self) -> PageMapping<'_, NormalMappingInfo> {
@@ -175,6 +190,19 @@ impl Pages<0> {
     #[inline(always)]
     pub fn kmap_atomic(&self) -> PageMapping<'_, AtomicMappingInfo> {
         let ptr = unsafe { bindings::kmap_atomic(self.pages) };
+
+        PageMapping {
+            page: self.pages,
+            ptr,
+            _phantom: PhantomData,
+            _phantom2: PhantomData,
+        }
+    }
+
+    /// Locally maps the page at index 0
+    #[inline(always)]
+    pub fn kmap_local(&self) -> PageMapping<'_, LocalMappingInfo> {
+        let ptr = unsafe { bindings::kmap_local_page(self.pages) };
 
         PageMapping {
             page: self.pages,
@@ -219,6 +247,10 @@ impl MappingInfo for AtomicMappingInfo {}
 pub struct NormalMappingInfo;
 impl MappingInfo for NormalMappingInfo {}
 
+/// A type state indicating that pages were mapped using `kmap_local_page`
+pub struct LocalMappingInfo;
+impl MappingInfo for LocalMappingInfo {}
+
 impl MappingActions<AtomicMappingInfo> for Pages<0> {
     #[inline(always)]
     fn map(pages: &Pages<0>) -> PageMapping<'_, AtomicMappingInfo> {
@@ -244,6 +276,24 @@ impl MappingActions<NormalMappingInfo> for Pages<0> {
         // SAFETY: An instance of `PageMapping` is created only when `kmap` succeeded for the given
         // page, so it is safe to unmap it here.
         unsafe { bindings::kunmap(mapping.page) };
+    }
+}
+
+/// Mapping actions to map and unmap pages with the `kmap_local_page` interface
+impl MappingActions<LocalMappingInfo> for Pages<0> {
+    #[inline(always)]
+    fn map(pages: &Pages<0>) -> PageMapping<'_, LocalMappingInfo> {
+        pages.kmap_local()
+    }
+
+    /// Unmap a page specified by `mapping`
+    ///
+    /// # Safety
+    ///
+    /// Must only be called by `PageMapping::drop()`.
+    #[inline(always)]
+    unsafe fn unmap(mapping: &PageMapping<'_, LocalMappingInfo>) {
+        unsafe { bindings::kunmap_local(mapping.ptr) };
     }
 }
 
