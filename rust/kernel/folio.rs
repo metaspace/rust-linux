@@ -6,6 +6,10 @@
 
 use crate::error::{code::*, Result};
 use crate::types::{ARef, AlwaysRefCounted, Opaque, ScopeGuard};
+use core::ffi::c_void;
+use core::marker::PhantomData;
+use core::ptr::NonNull;
+use core::slice;
 use core::{cmp::min, ptr};
 
 /// Wraps the kernel's `struct folio`.
@@ -71,7 +75,7 @@ impl Folio {
 pub struct UniqueFolio(pub(crate) ARef<Folio>);
 
 impl UniqueFolio {
-    /// Maps the contents of a folio page into a slice.
+    /// Maps the contents of a folio page into an immutable slice.
     pub fn map_page(&self, page_index: usize) -> Result<MapGuard<'_>> {
         if page_index >= self.0.size() / bindings::PAGE_SIZE {
             return Err(EDOM);
@@ -83,24 +87,48 @@ impl UniqueFolio {
         // SAFETY: `page` is valid because it was returned by `folio_page` above.
         let ptr = unsafe { bindings::kmap(page) };
 
-        // SAFETY: We just mapped `ptr`, so it's valid for read.
-        let data = unsafe { core::slice::from_raw_parts(ptr.cast::<u8>(), bindings::PAGE_SIZE) };
+        Ok(MapGuard {
+            ptr: unsafe { NonNull::new_unchecked(ptr) },
+            // TODO: We could use a `Page<0>` here
+            page,
+            _p: PhantomData,
+        })
+    }
 
-        Ok(MapGuard { data, page })
+    /// Maps the contents of a folio page into a mutable slice.
+    pub fn map_page_mut(&mut self, page_index: usize) -> Result<MutMapGuard<'_>> {
+        Ok(MutMapGuard(self.map_page(page_index)?))
+    }
+
+    /// Copy `src.len()` bytes from `src` into `self` at offset 0
+    pub fn copy_from_slice(&mut self, src: &[u8]) -> Result {
+        use core::ops::DerefMut;
+        let mut dst_map = self.map_page_mut(0)?;
+        let dst: &mut [u8] = dst_map.deref_mut();
+        dst.get_mut(..src.len())
+            .ok_or(ENOBUFS)?
+            .copy_from_slice(src);
+        Ok(())
     }
 }
 
 /// A mapped [`UniqueFolio`].
+///
+/// # Invariants
+///
+/// `ptr` is mapped for at least `bindings::PAGE_SIZE` bytes and valid for read and write.
 pub struct MapGuard<'a> {
-    data: &'a [u8],
+    ptr: NonNull<c_void>,
     page: *mut bindings::page,
+    _p: PhantomData<&'a ()>,
 }
 
 impl core::ops::Deref for MapGuard<'_> {
     type Target = [u8];
 
     fn deref(&self) -> &Self::Target {
-        self.data
+        // SAFETY: By type invariant, `ptr` is mapped and valid for read for `bindings::PAGE_SIZE` bytes
+        unsafe { core::slice::from_raw_parts(self.ptr.as_ptr().cast::<u8>(), bindings::PAGE_SIZE) }
     }
 }
 
@@ -109,6 +137,27 @@ impl Drop for MapGuard<'_> {
         // SAFETY: A `MapGuard` instance is only created when `kmap` succeeds, so it's ok to unmap
         // it when the guard is dropped.
         unsafe { bindings::kunmap(self.page) };
+    }
+}
+
+/// A mapped [`UniqueFolio`] that allows mutable access
+pub struct MutMapGuard<'a>(MapGuard<'a>);
+
+impl core::ops::Deref for MutMapGuard<'_> {
+    type Target = [u8];
+
+    fn deref(&self) -> &Self::Target {
+        self.0.deref()
+    }
+}
+
+impl core::ops::DerefMut for MutMapGuard<'_> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        // SAFETY: By the type invariant of `MapGuard`, `self.0.ptr` is mapped
+        // and valid for read and write for `bindings::PAGE_SIZE` bytes
+        unsafe {
+            core::slice::from_raw_parts_mut(self.0.ptr.as_ptr().cast::<u8>(), bindings::PAGE_SIZE)
+        }
     }
 }
 
