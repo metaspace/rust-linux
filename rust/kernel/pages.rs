@@ -143,8 +143,8 @@ impl Pages<0> {
         unsafe { self.write_internal::<NormalMappingInfo>(src, offset, len) }
     }
 
-    /// Maps the pages and writes into them from the given buffer. The page is
-    /// mapped atomically.
+    /// Maps the pages atomically and writes into them from the given buffer.
+    /// The page is mapped atomically.
     ///
     /// # Safety
     ///
@@ -199,7 +199,7 @@ impl Pages<0> {
         }
     }
 
-    /// Atomically Maps the page at index 0.
+    /// Atomically maps the page at index 0.
     #[inline(always)]
     pub fn kmap_atomic(&self) -> PageMapping<'_, AtomicMappingInfo> {
         let ptr = unsafe { bindings::kmap_atomic(self.pages) };
@@ -252,11 +252,11 @@ where
     unsafe fn unmap(mapping: &PageMapping<'_, I>);
 }
 
-/// A type state indicating that pages were mapped atomically
+/// A type state indicating that pages were mapped with `kmap_atomic`
 pub struct AtomicMappingInfo;
 impl MappingInfo for AtomicMappingInfo {}
 
-/// A type state indicating that pages were not mapped atomically
+/// A type state indicating that pages were mapped with `kmap`
 pub struct NormalMappingInfo;
 impl MappingInfo for NormalMappingInfo {}
 
@@ -264,30 +264,42 @@ impl MappingInfo for NormalMappingInfo {}
 pub struct LocalMappingInfo;
 impl MappingInfo for LocalMappingInfo {}
 
+/// Mapping actions to map and unmap pages with the `kmap_atomic` interface
 impl MappingActions<AtomicMappingInfo> for Pages<0> {
     #[inline(always)]
     fn map(pages: &Pages<0>) -> PageMapping<'_, AtomicMappingInfo> {
         pages.kmap_atomic()
     }
 
+    /// Unmap a page specified by `mapping`
+    ///
+    /// # Safety
+    ///
+    /// Must only be called by `PageMapping::drop()`.
     #[inline(always)]
     unsafe fn unmap(mapping: &PageMapping<'_, AtomicMappingInfo>) {
-        // SAFETY: An instance of `PageMapping` is created only when `kmap` succeeded for the given
-        // page, so it is safe to unmap it here.
+        // SAFETY: An instance of `PageMapping` is created only when `kmap`
+        // succeeded for the given page, so it is safe to unmap it here.
         unsafe { bindings::kunmap_atomic(mapping.ptr) };
     }
 }
 
+/// Mapping actions to map and unmap pages with the regular `kmap` interface
 impl MappingActions<NormalMappingInfo> for Pages<0> {
     #[inline(always)]
     fn map(pages: &Pages<0>) -> PageMapping<'_, NormalMappingInfo> {
         pages.kmap()
     }
 
+    /// Unmap a page specified by `mapping`
+    ///
+    /// # Safety
+    ///
+    /// Must only be called by `PageMapping::drop()`.
     #[inline(always)]
     unsafe fn unmap(mapping: &PageMapping<'_, NormalMappingInfo>) {
-        // SAFETY: An instance of `PageMapping` is created only when `kmap` succeeded for the given
-        // page, so it is safe to unmap it here.
+        // SAFETY: An instance of `PageMapping` is created only when `kmap`
+        // succeeded for the given page, so it is safe to unmap it here.
         unsafe { bindings::kunmap(mapping.page) };
     }
 }
