@@ -269,6 +269,17 @@ where
     }
 }
 
+impl<'a, I: MappingInfo> core::ops::Deref for PageMapping<'a, I>
+where
+    Pages<0>: MappingActions<I>,
+{
+    type Target = [u8];
+
+    fn deref(&self) -> &Self::Target {
+        unsafe { core::slice::from_raw_parts(self.ptr.cast::<u8>(), bindings::PAGE_SIZE) }
+    }
+}
+
 // Because we do not have Drop specialization, we have to do this dance. Life
 // would be much more simple if we could have `impl Drop for PageMapping<'_,
 // Atomic>` and `impl Drop for PageMapping<'_, NotAtomic>`
