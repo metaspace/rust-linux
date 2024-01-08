@@ -6,6 +6,7 @@
 
 use super::Bio;
 use crate::error::Result;
+use crate::folio::UniqueFolio;
 use crate::pages::Pages;
 use core::fmt;
 use core::mem::ManuallyDrop;
@@ -89,6 +90,24 @@ impl Segment<'_> {
         self.bio_vec.bv_offset as usize
     }
 
+    /// Copy data of this segment into `folio`.
+    ///
+    /// Note: Disregards `self.offset()`
+    #[inline(always)]
+    pub fn copy_to_folio(&self, dst: &mut UniqueFolio) -> Result {
+        // SAFETY: self.bio_vec is valid and thus bv_page must be a valid
+        // pointer to a `struct page`. We do not own the page, but we prevent
+        // drop by wrapping the `Pages` in `ManuallyDrop`.
+        let src_page = ManuallyDrop::new(unsafe { Pages::<0>::from_raw(self.bio_vec.bv_page) });
+        let src_map = src_page.kmap_local();
+
+        use core::ops::Deref;
+        let src: &[u8] = src_map.deref();
+
+        // TODO: local map here
+        dst.copy_from_slice(src)
+    }
+
     /// Copy data of this segment into `page`.
     #[inline(always)]
     pub fn copy_to_page_atomic(&self, page: &mut Pages<0>) -> Result {
@@ -109,6 +128,20 @@ impl Segment<'_> {
 
         let size = core::cmp::min(self.len(), limit_bytes);
         unsafe { page.write_atomic(ptr, self.offset(), size) }
+    }
+
+    /// Copy data to the page of this segment from `src`.
+    ///
+    /// Note: Disregards `self.offset()`
+    pub fn copy_from_folio(&mut self, src: &UniqueFolio) -> Result {
+        // SAFETY: self.bio_vec is valid and thus bv_page must be a valid
+        // pointer to a `struct page`. We do not own the page, but we prevent
+        // drop by wrapping the `Pages` in `ManuallyDrop`.
+        let mut dst_page = ManuallyDrop::new(unsafe { Pages::<0>::from_raw(self.bio_vec.bv_page) });
+        // TODO: map_local
+        let src_map = src.map_page(0)?;
+        use core::ops::Deref;
+        dst_page.copy_from_slice(src_map.deref())
     }
 
     /// Copy data from `page` into this segment
