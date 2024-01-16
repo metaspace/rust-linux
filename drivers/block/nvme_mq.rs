@@ -195,10 +195,12 @@ where
 {
     match rq.command() {
         bindings::req_op_REQ_OP_DRV_IN | bindings::req_op_REQ_OP_DRV_OUT => {
+            rq.start();
             io_queue.submit_command(unsafe { &*rq.data().cmd.get() }, is_last);
             Ok(())
         }
         bindings::req_op_REQ_OP_FLUSH => {
+            rq.start();
             let mut cmd = NvmeCommand::new_flush(ns.id);
             cmd.common.command_id = rq.tag() as u16;
             io_queue.submit_command(&cmd, is_last);
