@@ -46,6 +46,7 @@ pub mod irq;
 pub mod kunit;
 #[cfg(CONFIG_NET)]
 pub mod net;
+pub mod page;
 pub mod prelude;
 pub mod print;
 pub mod revocable;

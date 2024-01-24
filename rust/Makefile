@@ -16,6 +16,7 @@ RUST_HELPERS := \
 	io \
 	kunit \
 	mutex \
+	page \
 	pci \
 	rcu \
 	refcount \
