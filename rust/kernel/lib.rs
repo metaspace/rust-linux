@@ -48,6 +48,7 @@ pub mod kunit;
 pub mod module_param;
 #[cfg(CONFIG_NET)]
 pub mod net;
+pub mod page;
 pub mod prelude;
 pub mod print;
 pub mod revocable;
