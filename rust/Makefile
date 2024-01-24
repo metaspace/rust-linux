@@ -13,6 +13,7 @@ RUST_HELPERS := \
 	err \
 	kunit \
 	mutex \
+	page \
 	refcount \
 	signal \
 	spinlock\
