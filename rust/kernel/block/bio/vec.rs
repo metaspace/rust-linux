@@ -5,8 +5,13 @@
 //! C header: [`include/linux/bvec.h`](../../include/linux/bvec.h)
 
 use super::Bio;
-use crate::error::Result;
-use crate::pages::Pages;
+use crate::{
+    error::Result,
+    init::Init,
+    iov_iter::IovIter,
+    pages::Pages,
+    types::Opaque,
+};
 use core::fmt;
 use core::mem::ManuallyDrop;
 
@@ -121,6 +126,25 @@ impl Segment<'_> {
 
     pub fn page(&self) -> *mut bindings::page {
        self.bio_vec.bv_page
+    }
+
+    pub fn iov_iter(&self, source: bool) -> impl Init<IovIter<'_>> {
+        // SAFETY: self.bio_vec is valid and will remain valid for the
+        // lifetime of the returned IovIter. The IovIter is initialized
+        // by the FFI call.
+        unsafe {
+            kernel::init::init_from_closure(move |iov_iter: *mut IovIter<'_>| {
+                let ptr = core::ptr::addr_of_mut!((*iov_iter).iov_iter);
+                bindings::iov_iter_bvec(
+                    Opaque::raw_get(ptr),
+                    if source { bindings::ITER_SOURCE } else { bindings::ITER_DEST },
+                    &self.bio_vec,
+                    1,
+                    self.len()
+                );
+                Ok(())
+            })
+        }
     }
 }
 

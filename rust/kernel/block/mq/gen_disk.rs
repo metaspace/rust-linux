@@ -7,8 +7,11 @@
 
 use crate::block::mq::{raw_writer::RawWriter, Operations, TagSet};
 use crate::{
-    bindings, error::from_err_ptr, error::Result, sync::Arc, types::ForeignOwnable,
-    types::ScopeGuard,
+    bindings,
+    block,
+    error::{from_err_ptr, Result},
+    sync::{Arc, ArcBorrow},
+    types::{ForeignOwnable, ScopeGuard},
 };
 use core::fmt::{self, Write};
 
@@ -18,7 +21,7 @@ use core::fmt::{self, Write};
 ///
 ///  - `gendisk` must always point to an initialized and valid `struct gendisk`.
 pub struct GenDisk<T: Operations> {
-    _tagset: Arc<TagSet<T>>,
+    tagset: Arc<TagSet<T>>,
     gendisk: *mut bindings::gendisk,
 }
 
@@ -42,33 +45,12 @@ impl<T: Operations> GenDisk<T> {
             bindings::__blk_mq_alloc_disk(tagset.raw_tag_set(), data as _, lock_class_key.as_ptr())
         })?;
 
-        const TABLE: bindings::block_device_operations = bindings::block_device_operations {
-            submit_bio: None,
-            open: None,
-            release: None,
-            ioctl: None,
-            compat_ioctl: None,
-            check_events: None,
-            unlock_native_capacity: None,
-            getgeo: None,
-            set_read_only: None,
-            swap_slot_free_notify: None,
-            report_zones: None,
-            devnode: None,
-            alternative_gpt_sector: None,
-            get_unique_id: None,
-            owner: core::ptr::null_mut(),
-            pr_ops: core::ptr::null_mut(),
-            free_disk: None,
-            poll_bio: None,
-        };
-
         // SAFETY: gendisk is a valid pointer as we initialized it above
-        unsafe { (*gendisk).fops = &TABLE };
+        unsafe { (*gendisk).fops = block::operations::OperationsVtable::<T>::build() };
 
         recover_data.dismiss();
         Ok(Self {
-            _tagset: tagset,
+            tagset,
             gendisk,
         })
     }
@@ -95,6 +77,12 @@ impl<T: Operations> GenDisk<T> {
         unsafe { bindings::set_capacity(self.gendisk, sectors) };
     }
 
+    /// Call to tell the block layer that the capcacity of the device may have
+    /// changed
+    pub fn set_capacity_and_notify(&self, sectors: u64) {
+        unsafe { bindings::set_capacity_and_notify(self.gendisk, sectors) };
+    }
+
     /// Set the logical block size of the device
     pub fn set_queue_logical_block_size(&self, size: u32) {
         unsafe { bindings::blk_queue_logical_block_size((*self.gendisk).queue, size) };
@@ -117,6 +105,10 @@ impl<T: Operations> GenDisk<T> {
         unsafe { bindings::blk_queue_max_segments((*self.gendisk).queue, max_segments) };
     }
 
+    pub fn set_queue_write_cache(&self, wc: bool, fua: bool) {
+        unsafe { bindings::blk_queue_write_cache((*self.gendisk).queue, wc, fua) };
+    }
+
     /// Set the rotational media attribute for the device
     pub fn set_rotational(&self, rotational: bool) {
         if !rotational {
@@ -128,6 +120,11 @@ impl<T: Operations> GenDisk<T> {
                 bindings::blk_queue_flag_clear(bindings::QUEUE_FLAG_NONROT, (*self.gendisk).queue)
             };
         }
+    }
+
+    /// Get the tag set associated with the device
+    pub fn tagset(&self) -> ArcBorrow<'_, TagSet<T>> {
+        self.tagset.as_arc_borrow()
     }
 }
 

@@ -13,10 +13,15 @@
 //! Rust net API: <https://doc.rust-lang.org/std/net/index.html>
 
 use super::*;
-use crate::error::{to_result, Result};
-use crate::net::addr::*;
-use crate::net::ip::IpProtocol;
-use crate::net::socket::opts::{OptionsLevel, WritableOption};
+use crate::{
+    error::{to_result, Error, Result},
+    iov_iter::IovIter,
+    net::{
+        addr::*,
+        ip::IpProtocol,
+        socket::opts::{OptionsLevel, WritableOption},
+    },
+};
 use core::cmp::max;
 use core::marker::PhantomData;
 use flags::*;
@@ -162,8 +167,7 @@ impl Socket {
     /// ```
     pub fn set_flag(&self, flag: SocketFlag, value: bool) {
         let flags_width = core::mem::size_of_val(&self.flags()) * 8;
-        let mut flags =
-            bindings::__BindgenBitfieldUnit::<[u8; 8]>::new(self.flags().to_be_bytes());
+        let mut flags = bindings::__BindgenBitfieldUnit::<[u8; 8]>::new(self.flags().to_be_bytes());
         flags.set_bit(flag as _, value);
         self.set_flags(flags.get(0, flags_width as _));
     }
@@ -241,6 +245,22 @@ impl Socket {
         Self::base_new(|socket_ptr| unsafe {
             bindings::sock_create_lite(family as _, type_ as _, proto as _, socket_ptr)
         })
+    }
+
+    /// Looks up a socket by file descriptor.
+    ///
+    /// Wraps the `sockfd_lookup` function.
+    pub fn fd_lookup(fd: i32) -> Result<Self> {
+        // SAFETY: FFI call; the address is valid for the lifetime of the wrapper.
+        unsafe {
+            let mut err: i32 = 0;
+            let socket_ptr: *mut bindings::socket = bindings::sockfd_lookup(fd, &mut err);
+            if err == 0 {
+                Ok(Self(socket_ptr))
+            } else {
+                Err(Error::from_errno(err))
+            }
+        }
     }
 
     /// Binds the socket to a specific address.
@@ -417,6 +437,62 @@ impl Socket {
         Ok(size)
     }
 
+    /// Receive a message from the socket into a generic I/O iterator.
+    ///
+    /// Wraps the `sock_recvmsg` function.
+    /// See [Socket::receive_msg] for more information.
+    pub fn receive_msg_iov(
+        &self,
+        iov_iter: &IovIter<'_>,
+        flags: FlagSet<ReceiveFlag>,
+    ) -> Result<(usize, MessageHeader)> {
+        let addr = SocketAddrStorage::default();
+
+        let mut msg = bindings::msghdr {
+            msg_name: &addr as *const _ as _,
+            // SAFETY: `iov_iter.iov_iter` is an Opaque type representing a `bindings::iov_iter`
+            // struct, which is valid for the lifetime of the IovIter wrapper.
+            msg_iter: unsafe { (*iov_iter.iov_iter.get()).clone() },
+            ..Default::default()
+        };
+
+        // SAFETY: FFI call; the socket address is valid for the lifetime of the wrapper.
+        let size = unsafe {
+            bindings::sock_recvmsg(
+                self.0,
+                &mut msg as _,
+                flags.value() as _,
+            )
+        };
+        to_result(size)?;
+
+        let addr: Option<SocketAddr> = SocketAddr::try_from_raw(addr).ok();
+
+        Ok((size as _, MessageHeader::new(msg, addr)))
+    }
+
+    /// Receives data from a remote socket into a generic I/O iterator and returns the bytes
+    /// read and the sender address.
+    ///
+    /// See [Socket::receive_from] for more information.
+    pub fn receive_from_iov(
+        &self,
+        iov_iter: &IovIter<'_>,
+        flags: FlagSet<ReceiveFlag>,
+    ) -> Result<(usize, Option<SocketAddr>)> {
+        self.receive_msg_iov(iov_iter, flags)
+            .map(|(size, hdr)| (size, hdr.into()))
+    }
+
+    /// Receives data from a remote socket into a generic I/O iterator and returns only the bytes
+    /// read.
+    ///
+    /// See [Socket::receive] for more information.
+    pub fn receive_iov(&self, iov_iter: &IovIter<'_>, flags: FlagSet<ReceiveFlag>) -> Result<usize> {
+        let (size, _) = self.receive_from_iov(iov_iter, flags)?;
+        Ok(size)
+    }
+
     /// Sends a message to a remote socket.
     ///
     /// Wraps the `kernel_sendmsg` function.
@@ -474,6 +550,57 @@ impl Socket {
             ..Default::default()
         };
         self.send_msg(bytes, message, flags)
+    }
+
+    /// Sends a message with a generic I/O iterator to a remote socket.
+    ///
+    /// Wraps the `sock_sendmsg` function.
+    /// See [Socket::send_msg] for more information.
+    pub(crate) fn send_msg_iov(
+        &self,
+        iov_iter: &IovIter<'_>,
+        mut message: bindings::msghdr,
+        flags: FlagSet<SendFlag>,
+    ) -> Result<usize> {
+        // SAFETY: `iov_iter.iov_iter` is an Opaque type representing a `bindings::iov_iter`
+        // struct, which is valid for the lifetime of the IovIter wrapper.
+        message.msg_iter = unsafe { (*iov_iter.iov_iter.get()).clone() };
+        message.msg_flags = flags.value() as _;
+
+        // SAFETY: FFI call; the address is valid for the lifetime of the wrapper.
+        let size = unsafe {
+            bindings::sock_sendmsg(
+                self.0,
+                &message as *const _ as _,
+            )
+        };
+        to_result(size)?;
+        Ok(size as _)
+    }
+
+    /// Sends a message with a generic I/O iterator to a remote socket and returns the bytes sent.
+    ///
+    /// See [Socket::send] for more information.
+    pub fn send_iov(&self, iov_iter: &IovIter<'_>, flags: FlagSet<SendFlag>) -> Result<usize> {
+        self.send_msg_iov(iov_iter, bindings::msghdr::default(), flags)
+    }
+
+    /// Sends a message with a generic I/O iterator to a specific remote socket address and
+    /// returns the bytes sent.
+    ///
+    /// See [Socket::send_to] for more information.
+    pub fn send_to_iov(
+        &self,
+        iov_iter: &IovIter<'_>,
+        address: &SocketAddr,
+        flags: FlagSet<SendFlag>,
+    ) -> Result<usize> {
+        let message = bindings::msghdr {
+            msg_name: address.as_ptr() as _,
+            msg_namelen: address.size() as _,
+            ..Default::default()
+        };
+        self.send_msg_iov(iov_iter, message, flags)
     }
 
     /// Sets an option on the socket.
@@ -546,11 +673,16 @@ impl Socket {
 impl Drop for Socket {
     /// Closes and releases the socket.
     ///
-    /// Wraps the `sock_release` function.
+    /// Wraps `fput` or `sock_release`, depending on whether the socket has an associated file.
     fn drop(&mut self) {
         // SAFETY: FFI call; the address is valid for the lifetime of the wrapper.
         unsafe {
-            bindings::sock_release(self.0);
+            let file = (*self.0).file;
+            if file == core::ptr::null_mut() {
+                bindings::sock_release(self.0);
+            } else {
+                bindings::fput(file)
+            }
         }
     }
 }

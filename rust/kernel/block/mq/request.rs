@@ -87,9 +87,9 @@ impl<T: Operations> Request<T> {
     }
 
     /// Returns the per-request data associated with this request
-    pub fn data(self) -> Pin<&'static mut T::RequestData> {
+    pub fn data(&self) -> Pin<&T::RequestData> {
         unsafe {
-            Pin::new_unchecked(&mut *(bindings::blk_mq_rq_to_pdu(self.ptr) as *mut T::RequestData))
+            Pin::new_unchecked(&*(bindings::blk_mq_rq_to_pdu(self.ptr) as *mut T::RequestData))
         }
     }
 
@@ -173,9 +173,8 @@ impl<'a, T: Operations> RequestRef<'a, T> {
         }
     }
 
-    // TODO: This is unsound if we can create multiple RequestRef to same request
-    pub fn pdu(&mut self) -> &mut T::RequestData {
-        unsafe {&mut *(bindings::blk_mq_rq_to_pdu(self.rq.ptr) as *mut T::RequestData)}
+    pub fn pdu(&self) -> &T::RequestData {
+        unsafe {&*(bindings::blk_mq_rq_to_pdu(self.rq.ptr) as *mut T::RequestData)}
     }
 
     // TODO: This allows multiple calls to complete() if `RequestRef is constructed more than once

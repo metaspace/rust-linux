@@ -219,6 +219,11 @@ config BLK_DEV_NBD
 
 	  If unsure, say N.
 
+config BLK_DEV_NBD_RUST
+	tristate "Rust driver for network block device support"
+	depends on NET
+	depends on RUST
+
 config BLK_DEV_RAM
 	tristate "RAM block device support"
 	help

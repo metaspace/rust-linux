@@ -6,7 +6,7 @@
 
 use crate::{
     bindings,
-    block::mq::{tag_set::TagSetRef, Request},
+    block::{self, mq::{tag_set::TagSetRef, Request}},
     error::{from_result, Result},
     init::PinInit,
     types::ForeignOwnable,
@@ -15,16 +15,12 @@ use core::marker::PhantomData;
 
 /// Implement this trait to interface blk-mq as block devices
 #[macros::vtable]
-pub trait Operations: Sized {
+pub trait Operations: block::Operations + Sized {
     /// Data associated with a request. This data is located next to the request
     /// structure.
     type RequestData: Sized;
 
     type RequestDataInit: PinInit<Self::RequestData>;
-
-    /// Data associated with the `struct request_queue` that is allocated for
-    /// the `GenDisk` associated with this `Operations` implementation.
-    type QueueData: ForeignOwnable;
 
     /// Data associated with a dispatch queue. This is stored as a pointer in
     /// `struct blk_mq_hw_ctx`.
@@ -53,6 +49,11 @@ pub trait Operations: Sized {
         hw_data: <Self::HwData as ForeignOwnable>::Borrowed<'_>,
         queue_data: <Self::QueueData as ForeignOwnable>::Borrowed<'_>,
     );
+
+    /// Called by the kernel when a request times out
+    fn timeout(_rq: Request<Self>) -> bindings::blk_eh_timer_return {
+        bindings::blk_eh_timer_return_BLK_EH_RESET_TIMER
+    }
 
     /// Called by the kernel when the request is completed
     fn complete(_rq: Request<Self>);
@@ -144,6 +145,12 @@ impl<T: Operations> OperationsVtable<T> {
         T::commit_rqs(hw_data, queue_data)
     }
 
+    unsafe extern "C" fn timeout_callback(
+        rq: *mut bindings::request
+    ) -> bindings::blk_eh_timer_return {
+        T::timeout(unsafe { Request::from_ptr(rq) })
+    }
+
     unsafe extern "C" fn complete_callback(rq: *mut bindings::request) {
         T::complete(unsafe { Request::from_ptr(rq) });
     }
@@ -222,7 +229,7 @@ impl<T: Operations> OperationsVtable<T> {
         put_budget: None,
         set_rq_budget_token: None,
         get_rq_budget_token: None,
-        timeout: None,
+        timeout: Some(Self::timeout_callback),
         poll: if T::HAS_POLL {
             Some(Self::poll_callback)
         } else {

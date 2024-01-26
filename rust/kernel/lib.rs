@@ -39,6 +39,7 @@ mod build_assert;
 pub mod error;
 pub mod init;
 pub mod ioctl;
+pub mod iov_iter;
 #[cfg(CONFIG_KUNIT)]
 pub mod kunit;
 #[doc(hidden)]
