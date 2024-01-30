@@ -211,6 +211,31 @@ impl Pages<0> {
             _phantom2: PhantomData,
         }
     }
+
+
+    pub fn with_page_mapped_local<T>(&self, f: impl FnOnce(&[u8]) -> T) -> Result<T> {
+        let ptr = unsafe { bindings::kmap_local_page(self.pages) };
+
+        let buffer = unsafe { core::slice::from_raw_parts(ptr.cast::<u8>(), crate::PAGE_SIZE as usize) };
+
+        let res = f(buffer);
+
+        unsafe { bindings::kunmap_local(ptr) };
+
+        Ok(res)
+    }
+
+    pub fn with_page_mapped_local_mut<T>(&mut self, f: impl FnOnce(&mut [u8]) -> T) -> Result<T> {
+        let ptr = unsafe { bindings::kmap_local_page(self.pages) };
+
+        let buffer = unsafe { core::slice::from_raw_parts_mut(ptr.cast::<u8>(), crate::PAGE_SIZE as usize) };
+
+        let res = f(buffer);
+
+        unsafe { bindings::kunmap_local(ptr) };
+
+        Ok(res)
+    }
 }
 
 impl<const ORDER: u32> Drop for Pages<ORDER> {
