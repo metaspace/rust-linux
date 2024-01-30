@@ -109,6 +109,48 @@ impl UniqueFolio {
             .copy_from_slice(src);
         Ok(())
     }
+
+    pub fn with_page_mapped_local<T>(&self, page_index: usize, f: impl FnOnce(&[u8]) -> T) -> Result<T> {
+        if page_index >= self.0.size() / bindings::PAGE_SIZE {
+            return Err(EDOM);
+        }
+
+        // SAFETY: We just checked that the index is within bounds of the folio.
+        let page = unsafe { bindings::folio_page(self.0 .0.get(), page_index) };
+
+        let addr = unsafe { bindings::kmap_local_page(page) };
+
+        let buffer = unsafe {
+            core::slice::from_raw_parts(addr.cast::<u8>(), bindings::PAGE_SIZE)
+        };
+
+        let ret = f(buffer);
+
+        unsafe { bindings::kunmap_local(addr) };
+
+        Ok(ret)
+    }
+
+    pub fn with_page_mapped_local_mut<T>(&mut self, page_index: usize, f: impl FnOnce(&mut [u8]) -> T) -> Result<T> {
+        if page_index >= self.0.size() / bindings::PAGE_SIZE {
+            return Err(EDOM);
+        }
+
+        // SAFETY: We just checked that the index is within bounds of the folio.
+        let page = unsafe { bindings::folio_page(self.0 .0.get(), page_index) };
+
+        let addr = unsafe { bindings::kmap_local_page(page) };
+
+        let buffer = unsafe {
+            core::slice::from_raw_parts_mut(addr.cast::<u8>(), bindings::PAGE_SIZE)
+        };
+
+        let ret = f(buffer);
+
+        unsafe { bindings::kunmap_local(addr) };
+
+        Ok(ret)
+    }
 }
 
 /// A mapped [`UniqueFolio`].
