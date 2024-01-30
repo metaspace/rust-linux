@@ -5,7 +5,9 @@
 //! C headers: [`include/linux/mm.h`](../../include/linux/mm.h)
 
 use crate::error::{code::*, Result};
+use crate::page::Page;
 use crate::types::{ARef, AlwaysRefCounted, Opaque, ScopeGuard};
+use core::mem::ManuallyDrop;
 use core::{cmp::min, ptr};
 
 /// Wraps the kernel's `struct folio`.
@@ -87,6 +89,59 @@ impl UniqueFolio {
         let data = unsafe { core::slice::from_raw_parts(ptr.cast::<u8>(), bindings::PAGE_SIZE) };
 
         Ok(MapGuard { data, page })
+    }
+
+    /// Map a page into memory and run a function with a shared slice pointing
+    /// to a mapped page.
+    ///
+    /// The page is mapped for the duration fo the function.
+    pub fn with_slice_into_page<T>(
+        &self,
+        page_index: usize,
+        f: impl FnOnce(&[u8]) -> Result<T>,
+    ) -> Result<T> {
+        if page_index >= self.0.size() / bindings::PAGE_SIZE {
+            return Err(EDOM);
+        }
+
+        // SAFETY: We just checked that the index is within bounds of the folio.
+        let page_ptr = unsafe { bindings::folio_page(self.0 .0.get(), page_index) };
+
+        ManuallyDrop::new(
+            // SAFETY: `page_ptr` points to a page that we own. We take care not
+            // free the page when we are done with it, by wrapping in
+            // `ManuallyDrop`. We also do no mutable access through this `Page`.
+            unsafe { Page::from_raw(page_ptr) },
+        )
+        .with_slice_into_page(f)
+    }
+
+    /// Map a page into memory and run a function with a mutable slice pointing
+    /// to a mapped page.
+    ///
+    /// The page is mapped for the duration fo the function.
+    pub fn with_slice_into_page_mut<T>(
+        &mut self,
+        page_index: usize,
+        f: impl FnOnce(&mut [u8]) -> Result<T>,
+    ) -> Result<T> {
+        if page_index >= self.0.size() / bindings::PAGE_SIZE {
+            return Err(EDOM);
+        }
+
+        // SAFETY: We just checked that the index is within bounds of the folio.
+        let page_ptr = unsafe { bindings::folio_page(self.0 .0.get(), page_index) };
+
+        ManuallyDrop::new(
+            // SAFETY: `page_ptr` points to a page that we own. By existence of
+            // `&mut self` we have exclusive access to the page. We take care
+            // not free the page when we are done with it, by wrapping in
+            // `ManuallyDrop`. We forget the page as soone as we are donw with
+            // our access so as to allow no further mutable access through the
+            // `Page` we are creating.
+            unsafe { Page::from_raw(page_ptr) },
+        )
+        .with_slice_into_page_mut(f)
     }
 }
 
