@@ -11,6 +11,7 @@ RUST_HELPERS := \
 	build_assert \
 	build_bug \
 	err \
+	folio \
 	kunit \
 	mutex \
 	page \
