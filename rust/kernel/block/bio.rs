@@ -24,6 +24,21 @@ use crate::types::{AlwaysRefCounted, Opaque};
 #[repr(transparent)]
 pub struct Bio(Opaque<bindings::bio>);
 
+// SAFETY: The type invariant of `Bio` guarantees that instances are always
+// reference counted.
+unsafe impl AlwaysRefCounted for Bio {
+    fn inc_ref(&self) {
+        // SAFETY: The existence of a shared reference to self guarantees that
+        // `self` has a positive reference count and therefore it is valid.
+        unsafe { bindings::bio_get(self.0.get()) }
+    }
+
+    unsafe fn dec_ref(obj: NonNull<Self>) {
+        // SAFETY: The safety requirement of `dec_ref` ensures that `obj` has
+        // positive reference count.
+        unsafe { bindings::bio_put((*obj.as_ptr()).0.get()) }
+    }
+}
 
 impl Bio {
     /// Returns an iterator over segments in this `Bio`. Does not consider

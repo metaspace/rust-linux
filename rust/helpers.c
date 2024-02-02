@@ -227,6 +227,12 @@ void *rust_helper_kmap_local_folio(struct folio *folio, size_t offset)
 }
 EXPORT_SYMBOL_GPL(rust_helper_kmap_local_folio);
 
+void rust_helper_bio_get(struct bio *bio)
+{
+  return bio_get(bio);
+}
+EXPORT_SYMBOL_GPL(rust_helper_bio_get);
+
 struct bio_vec rust_helper_req_bvec(struct request *rq)
 {
 	return req_bvec(rq);
