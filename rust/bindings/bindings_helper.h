@@ -20,14 +20,23 @@
 #include <linux/mdio.h>
 #include <linux/pci.h>
 #include <linux/phy.h>
+#include <linux/pagemap.h>
 #include <linux/refcount.h>
 #include <linux/sched.h>
 #include <linux/slab.h>
 #include <linux/wait.h>
 #include <linux/workqueue.h>
 
-/* `bindgen` gets confused at certain things. */
-const size_t RUST_CONST_HELPER_ARCH_SLAB_MINALIGN = ARCH_SLAB_MINALIGN;
+	/* `bindgen` gets confused at certain things. */
+	const size_t RUST_CONST_HELPER_ARCH_SLAB_MINALIGN = ARCH_SLAB_MINALIGN;
 const gfp_t RUST_CONST_HELPER_GFP_KERNEL = GFP_KERNEL;
 const gfp_t RUST_CONST_HELPER___GFP_ZERO = __GFP_ZERO;
 const gfp_t RUST_CONST_HELPER___GFP_HIGHMEM = ___GFP_HIGHMEM;
+
+const slab_flags_t RUST_CONST_HELPER_SLAB_RECLAIM_ACCOUNT = SLAB_RECLAIM_ACCOUNT;
+
+const unsigned long RUST_CONST_HELPER_SB_RDONLY = SB_RDONLY;
+
+const loff_t RUST_CONST_HELPER_MAX_LFS_FILESIZE = MAX_LFS_FILESIZE;
+
+const size_t RUST_CONST_HELPER_PAGE_SIZE = PAGE_SIZE;
