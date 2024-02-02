@@ -13,6 +13,7 @@ RUST_HELPERS := \
 	build_bug \
 	device \
 	err \
+	folio \
 	io \
 	kunit \
 	mutex \
