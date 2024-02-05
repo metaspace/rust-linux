@@ -126,6 +126,14 @@ impl<T> Pool<T> {
     }
 }
 
+// SAFETY: A `Pool` is a reference (pointer) to an underlying C `struct
+// dma_pool`. Operations on the underlying pool is protected by a spinlock.
+unsafe impl<T> Send for Pool<T> {}
+
+// SAFETY: A `Pool` is a reference (pointer) to an underlying C `struct
+// dma_pool`. Operations on the underlying pool is protected by a spinlock.
+unsafe impl<T> Sync for Pool<T> {}
+
 impl<T> Allocator for Pool<T> {
     type AllocationData = *mut bindings::dma_pool;
     type DataSource = Arc<Pool<T>>;
