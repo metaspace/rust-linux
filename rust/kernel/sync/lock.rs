@@ -6,8 +6,19 @@
 //! spinlocks, raw spinlocks) to be provided with minimal effort.
 
 use super::LockClassKey;
-use crate::{bindings, init::PinInit, pin_init, str::CStr, types::Opaque, types::ScopeGuard};
-use core::{cell::UnsafeCell, marker::PhantomData, marker::PhantomPinned};
+use crate::{
+    bindings,
+    init::{init_unsafe_cell_from_content_initializer, PinInit},
+    pin_init,
+    str::CStr,
+    try_pin_init,
+    types::{Opaque, ScopeGuard},
+};
+use core::{
+    cell::UnsafeCell,
+    marker::{PhantomData, PhantomPinned},
+    pin::Pin,
+};
 use macros::pin_data;
 
 pub mod mutex;
@@ -87,6 +98,7 @@ pub struct Lock<T: ?Sized, B: Backend> {
     _pin: PhantomPinned,
 
     /// The data protected by the lock.
+    #[pin]
     pub(crate) data: UnsafeCell<T>,
 }
 
@@ -110,16 +122,37 @@ impl<T, B: Backend> Lock<T, B> {
             }),
         })
     }
+
+    /// Constructs a new lock initialiser from a fallible `PinInit` initializer
+    pub fn try_new_from_initializer<E>(
+        data_initializer: impl PinInit<T, E>,
+        name: &'static CStr,
+        key: &'static LockClassKey,
+    ) -> impl PinInit<Self, crate::error::Error>
+    where
+        crate::error::Error: From<E>,
+    {
+        try_pin_init!(Self {
+            data <- init_unsafe_cell_from_content_initializer(data_initializer),
+            _pin: PhantomPinned,
+            // SAFETY: `slot` is valid while the closure is called and both `name` and `key` have
+            // static lifetimes so they live indefinitely.
+            state <- Opaque::try_ffi_init(|slot| unsafe {
+                B::init(slot, name.as_char_ptr(), key.as_ptr());
+                Ok(())
+            }),
+        })
+    }
 }
 
 impl<T: ?Sized, B: Backend> Lock<T, B> {
     /// Acquires the lock and gives the caller access to the data protected by it.
-    pub fn lock(&self) -> Guard<'_, T, B> {
+    pub fn lock(&self) -> Pin<Guard<'_, T, B>> {
         // SAFETY: The constructor of the type calls `init`, so the existence of the object proves
         // that `init` was called.
         let state = unsafe { B::lock(self.state.get()) };
-        // SAFETY: The lock was just acquired.
-        unsafe { Guard::new(self, state) }
+        // SAFETY: The lock was just acquired, and this is the only handle to it
+        unsafe { Pin::new_unchecked(Guard::new(self, state)) }
     }
 }
 
@@ -139,13 +172,19 @@ pub struct Guard<'a, T: ?Sized, B: Backend> {
 unsafe impl<T: Sync + ?Sized, B: Backend> Sync for Guard<'_, T, B> {}
 
 impl<T: ?Sized, B: Backend> Guard<'_, T, B> {
-    pub(crate) fn do_unlocked(&mut self, cb: impl FnOnce()) {
+    pub(crate) fn do_unlocked(this: &mut Pin<Self>, cb: impl FnOnce()) {
+        // SAFETY: `Pin` is #[repr(transparent)] and we are not moving out of
+        // the `&mut T` pointee that we manage
+        let this = unsafe {
+            &mut* core::ptr::addr_of_mut!(*this).cast::<Guard<'_, T, B>>()
+        };
+
         // SAFETY: The caller owns the lock, so it is safe to unlock it.
-        unsafe { B::unlock(self.lock.state.get(), &self.state) };
+        unsafe { B::unlock(this.lock.state.get(), &this.state) };
 
         // SAFETY: The lock was just unlocked above and is being relocked now.
         let _relock =
-            ScopeGuard::new(|| unsafe { B::relock(self.lock.state.get(), &mut self.state) });
+            ScopeGuard::new(|| unsafe { B::relock(this.lock.state.get(), &mut this.state) });
 
         cb();
     }
@@ -160,7 +199,11 @@ impl<T: ?Sized, B: Backend> core::ops::Deref for Guard<'_, T, B> {
     }
 }
 
-impl<T: ?Sized, B: Backend> core::ops::DerefMut for Guard<'_, T, B> {
+impl<T, B> core::ops::DerefMut for Guard<'_, T, B>
+where
+    T: ?Sized + Unpin,
+    B: Backend,
+{
     fn deref_mut(&mut self) -> &mut Self::Target {
         // SAFETY: The caller owns the lock, so it is safe to deref the protected data.
         unsafe { &mut *self.lock.data.get() }

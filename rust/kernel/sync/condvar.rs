@@ -7,7 +7,7 @@
 
 use super::{lock::Backend, lock::Guard, LockClassKey};
 use crate::{bindings, init::PinInit, pin_init, str::CStr, types::Opaque};
-use core::marker::PhantomPinned;
+use core::{marker::PhantomPinned, pin::Pin};
 use macros::pin_data;
 
 /// Creates a [`CondVar`] initialiser with the given name and a newly-created lock class.
@@ -102,7 +102,11 @@ impl CondVar {
         })
     }
 
-    fn wait_internal<T: ?Sized, B: Backend>(&self, wait_state: u32, guard: &mut Guard<'_, T, B>) {
+    fn wait_internal<T: ?Sized, B: Backend>(
+        &self,
+        wait_state: u32,
+        guard: &mut Pin<Guard<'_, T, B>>,
+    ) {
         let wait = Opaque::<bindings::wait_queue_entry>::uninit();
 
         // SAFETY: `wait` points to valid memory.
@@ -114,7 +118,7 @@ impl CondVar {
         };
 
         // SAFETY: No arguments, switches to another thread.
-        guard.do_unlocked(|| unsafe { bindings::schedule() });
+        Guard::do_unlocked(guard, || unsafe { bindings::schedule() });
 
         // SAFETY: Both `wait` and `wait_list` point to valid memory.
         unsafe { bindings::finish_wait(self.wait_list.get(), wait.get()) };
@@ -126,7 +130,7 @@ impl CondVar {
     /// thread to sleep, reacquiring the lock on wake up. It wakes up when notified by
     /// [`CondVar::notify_one`] or [`CondVar::notify_all`]. Note that it may also wake up
     /// spuriously.
-    pub fn wait<T: ?Sized, B: Backend>(&self, guard: &mut Guard<'_, T, B>) {
+    pub fn wait<T: ?Sized, B: Backend>(&self, guard: &mut Pin<Guard<'_, T, B>>) {
         self.wait_internal(bindings::TASK_UNINTERRUPTIBLE, guard);
     }
 
@@ -137,7 +141,10 @@ impl CondVar {
     ///
     /// Returns whether there is a signal pending.
     #[must_use = "wait_interruptible returns if a signal is pending, so the caller must check the return value"]
-    pub fn wait_interruptible<T: ?Sized, B: Backend>(&self, guard: &mut Guard<'_, T, B>) -> bool {
+    pub fn wait_interruptible<T: ?Sized, B: Backend>(
+        &self,
+        guard: &mut Pin<Guard<'_, T, B>>,
+    ) -> bool {
         self.wait_internal(bindings::TASK_INTERRUPTIBLE, guard);
         crate::current!().signal_pending()
     }

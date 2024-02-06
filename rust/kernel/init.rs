@@ -1342,3 +1342,15 @@ macro_rules! impl_tuple_zeroable {
 }
 
 impl_tuple_zeroable!(A, B, C, D, E, F, G, H, I, J);
+
+/// Initialize the contents of an [`UnsafeCell<T>`] with an initializer for `T`
+pub(crate) fn init_unsafe_cell_from_content_initializer<T: ?Sized, E>(
+    initializer: impl PinInit<T, E>,
+) -> impl PinInit<UnsafeCell<T>, E> {
+    // SAFETY: UnsafeCell is repr transparent. Initializing `place` with
+    // `initializer` satisfies the rest of the requirements for
+    // `pin_init_from_closure`.
+    unsafe {
+        kernel::init::pin_init_from_closure(|place| initializer.__pinned_init(place as *mut T))
+    }
+}

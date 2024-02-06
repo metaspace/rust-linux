@@ -18,6 +18,20 @@ macro_rules! new_spinlock {
     };
 }
 
+/// Creates a [`SpinLock`] initializer with the given name and a newly-created lock class.
+///
+/// It uses the name if one is given, otherwise it generates one based on the file name and line
+/// number.
+///
+/// The lock content is initialized with the passed initializer.
+#[macro_export]
+macro_rules! try_new_spinlock_from_initializer {
+    ($inner:expr $(, $name:literal)? $(,)?) => {
+        $crate::sync::SpinLock::try_new_from_initializer(
+            $inner, $crate::optional_name!($($name)?), $crate::static_lock_class!())
+    };
+}
+
 /// A spinlock.
 ///
 /// Exposes the kernel's [`spinlock_t`]. When multiple CPUs attempt to lock the same spinlock, only
