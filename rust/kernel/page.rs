@@ -109,6 +109,54 @@ impl Page {
         }
     }
 
+    /// Map a page into memory and run a function with a shared slice pointing
+    /// to a mapped page.
+    ///
+    /// The page is mapped at least for the duration fo the function.
+    pub fn with_slice_into_page<T>(&self, f: impl FnOnce(&[u8]) -> Result<T>) -> Result<T> {
+        self.with_pointer_into_page(0, PAGE_SIZE, |pointer| {
+            // SAFETY:
+            // * The size of the allocation pointed to by `pointer` is
+            //   `PAGE_SIZE` `u8` elements.
+            // * As we have a shared reference to `self` and the lifetime of
+            //   this reference is captured by the returned slice, the data
+            //   pointed to by `pointer` is immutable for this lifetime, and
+            //   thus valid for reads.
+            // * `pointer` points to aligned `u8` data, because alignment of `u8` is 1.
+            // * The size of the returned slice is less than `isize::MAX`
+            //   because it is bounded by `PAGE_SIZE`.
+            let buffer =
+                unsafe { core::slice::from_raw_parts(pointer.cast::<u8>(), PAGE_SIZE) };
+            f(buffer)
+        })
+    }
+
+    /// Map a page into memory and run a function with a mutable slice pointing
+    /// to a mapped page.
+    ///
+    /// The page is mapped at least for the duration fo the function.
+    pub fn with_slice_into_page_mut<T>(
+        &mut self,
+        f: impl FnOnce(&mut [u8]) -> Result<T>,
+    ) -> Result<T> {
+        self.with_pointer_into_page(0, PAGE_SIZE, |pointer| {
+            // SAFETY:
+            // * The size of the allocation pointed to by `pointer` is
+            //   `PAGE_SIZE` `u8` elements.
+            // * As we have a mutable reference to `self` and the lifetime of
+            //   this reference is captured by the returned slice, we have
+            //   exclusive access to the data pointed to by `pointer` for this
+            //   lifetime, and the data is valid for read and write.
+            // * `pointer` points to aligned `u8` data, because alignment of `u8` is 1.
+            // * The size of the returned slice is less than `isize::MAX`
+            //   because it is bounded by `PAGE_SIZE`.
+            let buffer = unsafe {
+                core::slice::from_raw_parts_mut(pointer.cast::<u8>(), PAGE_SIZE)
+            };
+            f(buffer)
+        })
+    }
+
     /// Maps the page and reads from it into the given buffer.
     ///
     /// # Safety
