@@ -55,6 +55,19 @@ impl Page {
         self.page.as_ptr()
     }
 
+    /// Create a `Page` from a raw `struct page` pointer
+    ///
+    /// # Safety
+    ///
+    /// Caller must own the page pointed to by `ptr` as these will be freed when
+    /// the returned `Page` is dropped. `ptr` must point to a valid structure.
+    pub unsafe fn from_raw(ptr: *mut bindings::page) -> Self {
+        Self {
+            // SAFETY: By function safety requirements, ptr is not null
+            page: unsafe { NonNull::new_unchecked(ptr) },
+        }
+    }
+
     /// Runs a piece of code with this page mapped to an address.
     ///
     /// It is up to the caller to use the provided raw pointer correctly.
