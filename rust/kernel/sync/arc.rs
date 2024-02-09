@@ -355,6 +355,8 @@ impl<T: ?Sized> Arc<T> {
 }
 
 impl<T: 'static> ForeignOwnable for Arc<T> {
+    const FOREIGN_ALIGN: usize = core::mem::align_of::<ArcInner<T>>();
+
     type Borrowed<'a> = ArcBorrow<'a, T>;
     // Mutable access to the `Arc` does not give any extra abilities over
     // immutable access.
