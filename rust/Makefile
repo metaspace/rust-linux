@@ -22,7 +22,8 @@ RUST_HELPERS := \
 	task \
 	uaccess \
 	wait \
-	workqueue
+	workqueue \
+	xarray
 
 export RUST_HELPERS
 obj-y += helpers/
