@@ -53,6 +53,7 @@ pub mod sync;
 pub mod task;
 pub mod types;
 pub mod workqueue;
+pub mod xarray;
 
 #[doc(hidden)]
 pub use bindings;
