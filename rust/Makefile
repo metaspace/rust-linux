@@ -20,7 +20,8 @@ RUST_HELPERS := \
 	spinlock\
 	task \
 	wait \
-	workqueue
+	workqueue \
+	xarray
 
 export RUST_HELPERS
 obj-y += helpers/
