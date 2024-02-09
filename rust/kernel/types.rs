@@ -21,7 +21,11 @@ use core::{
 /// This trait is meant to be used in cases when Rust objects are stored in C objects and
 /// eventually "freed" back to Rust.
 pub trait ForeignOwnable: Sized {
-    /// Type used to immutably borrow a value that is currently foreign-owned.
+    /// The alignment of pointers returned by `into_foreign`.
+    const FOREIGN_ALIGN: usize;
+
+    /// Type of values borrowed between calls to [`ForeignOwnable::into_foreign`] and
+    /// [`ForeignOwnable::from_foreign`].
     type Borrowed<'a>;
 
     /// Type used to mutably borrow a value that is currently foreign-owned.
@@ -107,6 +111,8 @@ pub trait ForeignOwnable: Sized {
 }
 
 impl<T: 'static> ForeignOwnable for Box<T> {
+    const FOREIGN_ALIGN: usize = core::mem::align_of::<T>();
+
     type Borrowed<'a> = &'a T;
     type BorrowedMut<'a> = &'a mut T;
 
@@ -134,6 +140,8 @@ impl<T: 'static> ForeignOwnable for Box<T> {
 }
 
 impl ForeignOwnable for () {
+    const FOREIGN_ALIGN: usize = core::mem::align_of::<()>();
+
     type Borrowed<'a> = ();
     type BorrowedMut<'a> = ();
 
