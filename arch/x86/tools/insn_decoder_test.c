@@ -106,7 +106,7 @@ static void parse_args(int argc, char **argv)
 	}
 }
 
-#define BUFSIZE 256
+#define BUFSIZE 1024
 
 int main(int argc, char **argv)
 {
