@@ -4,13 +4,16 @@
 //!
 //! C header: [`include/linux/blk-mq.h`](srctree/include/linux/blk-mq.h)
 
+use kernel::hrtimer::RawTimer;
+
 use crate::{
     bindings,
     block::mq::Operations,
     error::{Error, Result},
+    hrtimer::{HasTimer, TimerCallback},
     types::{ARef, AlwaysRefCounted, Opaque},
 };
-use core::{ffi::c_void, marker::PhantomData, ops::Deref};
+use core::{ffi::c_void, marker::PhantomData, ops::Deref, ptr::NonNull};
 
 use crate::block::bio::Bio;
 use crate::block::bio::BioIterator;
@@ -172,6 +175,68 @@ where
 
     fn deref(&self) -> &Self::Target {
         self.request.data_ref()
+    }
+}
+
+impl<T> RawTimer for RequestDataRef<T>
+where
+    T: Operations,
+    T::RequestData: HasTimer<T::RequestData>,
+    T::RequestData: Sync,
+{
+    fn schedule(self, expires: u64) {
+        let self_ptr = self.deref() as *const T::RequestData;
+        core::mem::forget(self);
+
+        // SAFETY: `self_ptr` is a valid pointer to a `T::RequestData`
+        let timer_ptr = unsafe { T::RequestData::raw_get_timer(self_ptr) };
+
+        // `Timer` is `repr(transparent)`
+        let c_timer_ptr = timer_ptr.cast::<bindings::hrtimer>();
+
+        // Schedule the timer - if it is already scheduled it is removed and
+        // inserted
+
+        // SAFETY: c_timer_ptr points to a valid hrtimer instance that was
+        // initialized by `hrtimer_init`
+        unsafe {
+            bindings::hrtimer_start_range_ns(
+                c_timer_ptr as *mut _,
+                expires as i64,
+                0,
+                bindings::hrtimer_mode_HRTIMER_MODE_REL,
+            );
+        }
+    }
+}
+
+impl<T> kernel::hrtimer::RawTimerCallback for RequestDataRef<T>
+where
+    T: Operations,
+    T: Sync,
+    T::RequestData: HasTimer<T::RequestData>,
+    T::RequestData: TimerCallback<Receiver = Self>,
+{
+    unsafe extern "C" fn run(ptr: *mut bindings::hrtimer) -> bindings::hrtimer_restart {
+        // `Timer` is `repr(transparent)`
+        let timer_ptr = ptr.cast::<kernel::hrtimer::Timer<T::RequestData>>();
+
+        // SAFETY: By C API contract `ptr` is the pointer we passed when
+        // enqueing the timer, so it is a `Timer<T::RequestData>` embedded in a `T::RequestData`
+        let receiver_ptr = unsafe { T::RequestData::timer_container_of(timer_ptr) };
+
+        // SAFETY: The pointer was returned by `T::timer_container_of` so it
+        // points to a valid `T::RequestData`
+        let request_ptr = unsafe { bindings::blk_mq_rq_from_pdu(receiver_ptr.cast::<c_void>()) };
+
+        // SAFETY: We own a refcount that we leaked during `RawTimer::schedule()`
+        let dref = RequestDataRef::new(unsafe {
+            ARef::from_raw(NonNull::new_unchecked(request_ptr.cast::<Request<T>>()))
+        });
+
+        T::RequestData::run(dref);
+
+        bindings::hrtimer_restart_HRTIMER_NORESTART
     }
 }
 
