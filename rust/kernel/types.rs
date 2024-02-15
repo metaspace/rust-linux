@@ -337,6 +337,7 @@ pub unsafe trait AlwaysRefCounted {
 ///
 /// The pointer stored in `ptr` is non-null and valid for the lifetime of the [`ARef`] instance. In
 /// particular, the [`ARef`] instance owns an increment on the underlying object's reference count.
+#[repr(transparent)]
 pub struct ARef<T: AlwaysRefCounted> {
     ptr: NonNull<T>,
     _p: PhantomData<T>,
