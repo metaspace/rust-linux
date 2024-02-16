@@ -61,7 +61,7 @@ pub mod workqueue;
 #[doc(hidden)]
 pub use bindings;
 pub use macros;
-#[cfg(CONFIG_PCI)]
+#[cfg(all(CONFIG_PCI, CONFIG_PCI_MSI))]
 pub mod pci;
 pub use uapi;
 
