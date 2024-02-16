@@ -246,20 +246,6 @@ impl Device {
         unsafe { bindings::pci_set_master(self.ptr) };
     }
 
-    pub fn select_bars(&self, flags: core::ffi::c_ulong) -> i32 {
-        unsafe { bindings::pci_select_bars(self.ptr, flags) }
-    }
-
-    pub fn request_selected_regions(&self, bars: i32, name: &'static CStr) -> Result {
-        let ret =
-            unsafe { bindings::pci_request_selected_regions(self.ptr, bars, name.as_char_ptr()) };
-        if ret != 0 {
-            Err(Error::from_errno(ret))
-        } else {
-            Ok(())
-        }
-    }
-
     pub fn take_resource(&mut self, index: usize) -> Option<Resource> {
         let pdev = unsafe { &*self.ptr };
 
