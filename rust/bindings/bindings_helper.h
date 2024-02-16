@@ -8,6 +8,7 @@
 
 #include <kunit/test.h>
 #include <linux/device.h>
+#include <linux/dmapool.h>
 #include <linux/errname.h>
 #include <linux/ethtool.h>
 #include <linux/interrupt.h>
