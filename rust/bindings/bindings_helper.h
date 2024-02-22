@@ -7,6 +7,8 @@
  */
 
 #include <kunit/test.h>
+#include <linux/blk_types.h>
+#include <linux/blk-mq.h>
 #include <linux/device.h>
 #include <linux/dmapool.h>
 #include <linux/errname.h>
