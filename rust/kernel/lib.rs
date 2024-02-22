@@ -33,6 +33,7 @@ extern crate self as kernel;
 #[cfg(not(test))]
 #[cfg(not(testlib))]
 mod allocator;
+pub mod block;
 mod build_assert;
 pub mod device;
 pub mod driver;

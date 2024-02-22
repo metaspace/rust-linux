@@ -7,6 +7,7 @@ obj-$(CONFIG_RUST) += core.o compiler_builtins.o
 always-$(CONFIG_RUST) += exports_core_generated.h
 
 RUST_HELPERS := \
+	blk-mq \
 	bug \
 	build_assert \
 	build_bug \
