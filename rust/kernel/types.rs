@@ -269,6 +269,19 @@ impl<T> Opaque<T> {
         }
     }
 
+    /// Fallible version of [`ffi_init()`].
+    ///
+    /// [`ffi_init()`]: Opaque::ffi_init
+    pub fn try_ffi_init<E>(init_func: impl FnOnce(*mut T) -> Result<(), E>) -> impl PinInit<Self, E> {
+        // SAFETY: We contain a `MaybeUninit`, so it is OK for the `init_func` to not fully
+        // initialize the `T`.
+        unsafe {
+            init::pin_init_from_closure::<_, E>(move |slot| {
+                init_func(Self::raw_get(slot))
+            })
+        }
+    }
+
     /// Returns a raw pointer to the opaque data.
     pub fn get(&self) -> *mut T {
         UnsafeCell::get(&self.value).cast::<T>()
