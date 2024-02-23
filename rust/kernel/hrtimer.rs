@@ -7,60 +7,63 @@
 //!
 //! # Example
 //!
+//! ```rust
+//! use kernel::{
+//!     sync::Arc, hrtimer::{RawTimer, Timer, TimerCallback},
+//!     impl_has_timer, prelude::*, stack_pin_init
+//! };
+//! use core::sync::atomic::AtomicBool;
+//! use core::sync::atomic::Ordering;
+//!
+//! #[pin_data]
+//! struct IntrusiveTimer {
+//!     #[pin]
+//!     timer: Timer<Self>,
+//!     flag: AtomicBool,
+//! }
+//!
+//! impl IntrusiveTimer {
+//!     fn new() -> impl PinInit<Self> {
+//!         pin_init!(Self {
+//!             timer <- Timer::new(),
+//!             flag: AtomicBool::new(false),
+//!         })
+//!     }
+//! }
+//!
+//! impl TimerCallback for IntrusiveTimer {
+//!     type Receiver = Arc<IntrusiveTimer>;
+//!
+//!     fn run(this: Self::Receiver) {
+//!         pr_info!("Timer called\n");
+//!         this.flag.store(true, Ordering::Relaxed);
+//!     }
+//! }
+//!
+//! impl_has_timer! {
+//!     impl HasTimer<Self> for IntrusiveTimer { self.timer }
+//! }
+//!
+//! let has_timer = Arc::pin_init(IntrusiveTimer::new())?;
+//! has_timer.clone().schedule(200_000_000);
+//! while !has_timer.flag.load(Ordering::Relaxed) { core::hint::spin_loop() }
+//!
+//! pr_info!("Flag raised\n");
+//!
+//! # Ok::<(), kernel::error::Error>(())
 //! ```
-//!    use kernel::sync::Arc;
-//!    use kernel::{hrtimer::{RawTimer, Timer, TimerCallback}, impl_has_timer, pr_info, prelude::*, stack_pin_init};
-//!    use core::sync::atomic::AtomicBool;
-//!    use core::sync::atomic::Ordering;
-//!    #[pin_data]
-//!    struct IntrusiveTimer {
-//!        #[pin]
-//!        timer: Timer<Self>,
-//!        flag: Arc<AtomicBool>,
-//!    }
 //!
-//!    impl IntrusiveTimer {
-//!        fn new() -> impl PinInit<Self> {
-//!            pin_init!(Self {
-//!                timer <- Timer::new(),
-//!                flag: Arc::try_new(AtomicBool::new(false)).unwrap(),
-//!            })
-//!        }
-//!    }
-//!
-//!    impl TimerCallback for IntrusiveTimer {
-//!        type Receiver<'a> = Pin<&'a IntrusiveTimer>;
-//!
-//!        fn run(this: Self::Receiver<'_>) {
-//!            pr_info!("Timer called\n");
-//!            this.flag.store(true, Ordering::Relaxed);
-//!        }
-//!    }
-//!
-//!    impl_has_timer! {
-//!        impl HasTimer<Self> for IntrusiveTimer { self.timer }
-//!    }
-//!
-//!    stack_pin_init!(let timer = IntrusiveTimer::new());
-//!    let flag = timer.flag.clone();
-//!
-//!    timer.into_ref().schedule(200_000_000);
-//!    while !flag.load(Ordering::Relaxed) {}
-//!    pr_info!("Done\n");
-//! ```
-//!
-//! C header: [`include/linux/hrtimer.h`](srctree/include/linux/workqueue.h)
+//! C header: [`include/linux/hrtimer.h`](srctree/include/linux/hrtimer.h)
 
 use core::{marker::PhantomData, pin::Pin};
 
-use crate::{init::PinInit, prelude::*, types::Opaque};
+use crate::{init::PinInit, prelude::*, sync::Arc, types::Opaque};
 
 /// A timer backed by a C `struct hrtimer`
 ///
 /// # Invariants
 ///
 /// * `self.timer` is initialized by `bindings::hrtimer_init`.
-///
 #[repr(transparent)]
 #[pin_data(PinnedDrop)]
 pub struct Timer<T> {
@@ -72,17 +75,17 @@ pub struct Timer<T> {
 // SAFETY: A `Timer` can be moved to other threads and used from there.
 unsafe impl<T> Send for Timer<T> {}
 
-// SAFETY: Timer operatins are locked on C side, so it is safe to operate on a
+// SAFETY: Timer operations are locked on C side, so it is safe to operate on a
 // timer from multiple threads
 unsafe impl<T> Sync for Timer<T> {}
 
 impl<T: TimerCallback> Timer<T> {
-    /// Create an initializer for a new `Timer`
+    /// Return an initializer for a new timer instance.
     pub fn new() -> impl PinInit<Self> {
         crate::pin_init!( Self {
             timer <- Opaque::ffi_init(move |place: *mut bindings::hrtimer| {
                 // SAFETY: By design of `pin_init!`, `place` is a pointer live
-                // allication. hrtimer_init will initialize `place` and does not
+                // allocation. hrtimer_init will initialize `place` and does not
                 // require `place` to be initialized prior to the call.
                 unsafe {
                     bindings::hrtimer_init(
@@ -117,11 +120,19 @@ impl<T> PinnedDrop for Timer<T> {
     }
 }
 
-/// Implemented by pointer types to structs that embed a [`Timer`] to allow
-/// queueing the timer through the pointer.
+/// Implemented by pointer types to structs that embed a [`Timer`]. This trait
+/// facilitates queueing the timer through the pointer that implements the
+/// trait.
 ///
-/// Target must be `Sync` because timer callbacks happen in another thread of
+/// Typical implementers would be [`Box<T>`], [`Arc<T>`], [`ARef<T>`] where `T`
+/// has a field of type `Timer`.
+///
+/// Target must be [`Sync`] because timer callbacks happen in another thread of
 /// execution.
+///
+/// [`Box<T>`]: Box
+/// [`Arc<T>`]: Arc
+/// [`ARef<T>`]: crate::types::ARef
 pub trait RawTimer: Sync {
     /// Schedule the timer after `expires` time units
     fn schedule(self, expires: u64);
@@ -138,16 +149,10 @@ pub trait RawTimer: Sync {
 /// field at the offset specified by `OFFSET` and that all trait methods are
 /// implemented according to their documentation.
 ///
+/// [`impl_has_timer`]: crate::impl_has_timer
 pub unsafe trait HasTimer<T> {
     /// Offset of the [`Timer`] field within `Self`
     const OFFSET: usize;
-
-    /// Returns offset of the [`Timer`] struct within `Self`.
-    ///
-    /// Required because [`OFFSET`] cannot be accessed when `Self` is `!Sized`.
-    fn get_timer_offset(&self) -> usize {
-        Self::OFFSET
-    }
 
     /// Return a pointer to the [`Timer`] within `Self`.
     ///
@@ -157,7 +162,7 @@ pub unsafe trait HasTimer<T> {
     unsafe fn raw_get_timer(ptr: *const Self) -> *const Timer<T> {
         // SAFETY: By the safety requirement of this trait, the trait
         // implementor will have a `Timer` field at the specified offset.
-        unsafe { (ptr as *const u8).add(Self::OFFSET) as *const Timer<T> }
+        unsafe { ptr.cast::<u8>().add(Self::OFFSET).cast::<Timer<T>>() }
     }
 
     /// Return a pointer to the struct that is embedding the [`Timer`] pointed
@@ -172,7 +177,7 @@ pub unsafe trait HasTimer<T> {
     {
         // SAFETY: By the safety requirement of this trait, the trait
         // implementor will have a `Timer` field at the specified offset.
-        unsafe { (ptr as *mut u8).sub(Self::OFFSET) as *mut Self }
+        unsafe { ptr.cast::<u8>().sub(Self::OFFSET).cast::<Self>() }
     }
 }
 
@@ -188,22 +193,20 @@ pub trait RawTimerCallback: RawTimer {
 
 /// Implemented by pointers to structs that can the target of a timer callback
 pub trait TimerCallback {
-    /// The type of the reciever of the callback
-    type Receiver<'a>: RawTimerCallback;
+    /// Type of `this` argument for `run()`.
+    type Receiver: RawTimerCallback;
 
     /// Called by the timer logic when the timer fires
-    fn run(this: Self::Receiver<'_>);
+    fn run(this: Self::Receiver);
 }
 
-impl<T: Sync> RawTimer for Pin<&T>
+impl<T> RawTimer for Arc<T>
 where
+    T: Send + Sync,
     T: HasTimer<T>,
 {
     fn schedule(self, expires: u64) {
-        // SAFETY: We are never moving the pointee of `self`
-        let unpinned = unsafe { Pin::into_inner_unchecked(self) };
-
-        let self_ptr = unpinned as *const T;
+        let self_ptr = Arc::into_raw(self);
 
         // SAFETY: `self_ptr` is a valid pointer to a `T`
         let timer_ptr = unsafe { T::raw_get_timer(self_ptr) };
@@ -214,11 +217,11 @@ where
         // Schedule the timer - if it is already scheduled it is removed and
         // inserted
 
-        // SAFETY: c_timer$_ptr points to a valid hrtimer instance that was
+        // SAFETY: c_timer_ptr points to a valid hrtimer instance that was
         // initialized by `hrtimer_init`
         unsafe {
             bindings::hrtimer_start_range_ns(
-                c_timer_ptr as *mut _,
+                c_timer_ptr.cast_mut(),
                 expires as i64,
                 0,
                 bindings::hrtimer_mode_HRTIMER_MODE_REL,
@@ -227,33 +230,34 @@ where
     }
 }
 
-impl<'a, T: Sync> RawTimerCallback for Pin<&'a T>
+impl<T> kernel::hrtimer::RawTimerCallback for Arc<T>
 where
+    T: Send + Sync,
     T: HasTimer<T>,
-    T: TimerCallback<Receiver<'a> = Self> + 'a,
+    T: TimerCallback<Receiver = Self>,
 {
     unsafe extern "C" fn run(ptr: *mut bindings::hrtimer) -> bindings::hrtimer_restart {
         // `Timer` is `repr(transparent)`
-        let timer_ptr = ptr.cast::<Timer<T>>();
+        let timer_ptr = ptr.cast::<kernel::hrtimer::Timer<T>>();
 
-        // SAFETY: By C API contract ptr is the pointer we passed when enqueing
-        // the timer, so it is a `Timer<T>` embedded in a `T`
-        let receiver_ptr = unsafe { T::timer_container_of(timer_ptr) };
+        // SAFETY: By C API contract `ptr` is the pointer we passed when
+        // enqueing the timer, so it is a `Timer<T>` embedded in a `T`
+        let data_ptr = unsafe { T::timer_container_of(timer_ptr) };
 
-        // SAFETY: The pointer was returned by `T::timer_container_of` so it points to a valid `T`
-        let receiver_ref = unsafe { &*receiver_ptr };
+        // SAFETY: This `Arc` comes from a call to `Arc::into_raw()`
+        let receiver = unsafe { Arc::from_raw(data_ptr) };
 
-        // SAFETY: We are not moving out of `receiver_pin`
-        let receiver_pin = unsafe { Pin::new_unchecked(receiver_ref) };
-
-        T::run(receiver_pin);
+        T::run(receiver);
 
         bindings::hrtimer_restart_HRTIMER_NORESTART
     }
 }
 
-/// Derive the [`HasTimer`] trait for a struct that contains a field of type
-/// [`Timer`]. See the module level documentation for an example.
+/// Use to implement the [`HasTimer<T>`] trait.
+///
+/// See [`module`] documentation for an example.
+///
+/// [`module`]: crate::hrtimer
 #[macro_export]
 macro_rules! impl_has_timer {
     ($(impl$(<$($implarg:ident),*>)?
