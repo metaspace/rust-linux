@@ -32,6 +32,7 @@ pub mod alloc;
 #[cfg(CONFIG_BLOCK)]
 pub mod block;
 mod build_assert;
+mod cache_aligned;
 pub mod device;
 pub mod device_id;
 pub mod devres;
@@ -65,6 +66,7 @@ pub mod xarray;
 
 #[doc(hidden)]
 pub use bindings;
+pub use cache_aligned::CacheAligned;
 pub mod io;
 pub use macros;
 #[cfg(all(CONFIG_PCI, CONFIG_PCI_MSI))]
