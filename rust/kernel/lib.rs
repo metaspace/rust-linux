@@ -19,6 +19,7 @@
 #![feature(lint_reasons)]
 #![feature(unsize)]
 #![feature(sync_unsafe_cell)]
+#![feature(const_mut_refs)]
 
 // Ensure conditional compilation based on the kernel configuration works;
 // otherwise we may silently break things like initcall handling.
@@ -34,6 +35,7 @@ pub mod alloc;
 #[cfg(CONFIG_BLOCK)]
 pub mod block;
 mod build_assert;
+mod cache_aligned;
 pub mod cred;
 pub mod device;
 pub mod error;
@@ -74,6 +76,7 @@ pub mod xarray;
 
 #[doc(hidden)]
 pub use bindings;
+pub use cache_aligned::CacheAligned;
 pub use macros;
 pub use uapi;
 
