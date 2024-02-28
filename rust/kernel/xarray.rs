@@ -150,8 +150,8 @@ impl<'a, T: ForeignOwnable> Drop for Reservation<'a, T> {
 /// let arr = Box::pin_init(XArray::<Arc<Foo>>::new(flags::ALLOC1))
 ///                        .expect("Unable to allocate XArray");
 ///
-/// let foo = Arc::try_new(Foo { a : 1, b: 2 }).expect("Unable to allocate Foo");
-/// let index = arr.alloc(foo).expect("Error allocating Index");
+/// let item = Arc::try_new(Foo { a : 1, b: 2 }).expect("Unable to allocate Foo");
+/// let index = arr.alloc(item).expect("Error allocating Index");
 ///
 /// if let Some(guard) = arr.get_locked(index) {
 ///     assert_eq!(guard.borrow().a, 1);
@@ -160,8 +160,8 @@ impl<'a, T: ForeignOwnable> Drop for Reservation<'a, T> {
 ///     pr_info!("No value found in index {}", index);
 /// }
 ///
-/// let foo = Arc::try_new(Foo { a : 3, b: 4 }).expect("Unable to allocate Foo");
-/// let index = arr.alloc(foo).expect("Error allocating Index");
+/// let item = Arc::try_new(Foo { a : 3, b: 4 }).expect("Unable to allocate Foo");
+/// let index = arr.alloc(item).expect("Error allocating Index");
 ///
 /// if let Some(removed_data) = arr.remove(index) {
 ///     assert_eq!(removed_data.a, 3);
