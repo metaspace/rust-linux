@@ -11,7 +11,7 @@ use crate::{
     sync::Arc,
     types::{ARef, AlwaysRefCounted, ForeignOwnable, Opaque},
 };
-use core::{ffi::c_void, marker::PhantomData, ops::Deref};
+use core::{ffi::c_void, marker::PhantomData, ops::Deref, ptr::NonNull};
 
 use crate::block::bio::Bio;
 use crate::block::bio::BioIterator;
@@ -175,6 +175,20 @@ impl<T: Operations> Request<T> {
     /// Returns the number of bytes in the payload of this request
     pub fn payload_bytes(&self) -> u32 {
         unsafe { bindings::blk_rq_payload_bytes(self.0.get()) }
+    }
+
+
+    pub fn try_to_owned_ref(&self) -> Option<ARef<Self>> {
+        if unsafe { bindings::req_ref_inc_not_zero(self.0.get()) } {
+            let rq =
+            // SAFETY: We own a refcount that we took above. We pass that to
+            // `ARef`.
+                unsafe { ARef::from_raw(NonNull::new_unchecked((self as *const Self).cast_mut())) };
+            Some(rq)
+        } else {
+            None
+        }
+
     }
 }
 
