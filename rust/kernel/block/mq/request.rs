@@ -291,6 +291,17 @@ impl<T: Operations> Request<T> {
     pub fn payload_bytes(&self) -> u32 {
         unsafe { bindings::blk_rq_payload_bytes(self.0.get()) }
     }
+
+
+    pub fn try_to_owned_ref(&self) -> Option<ARef<Self>> {
+        self.wrapper_ref().refcount.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |x| {
+            if x >= 2 {
+                Some(x+1)
+            } else {
+                None
+            }
+        }).ok().map(|_| unsafe { ARef::from_raw(NonNull::new_unchecked((self as *const Self).cast_mut())) })
+    }
 }
 
 /// A wrapper around data stored in the private area of the C `struct request`.
