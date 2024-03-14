@@ -13,8 +13,10 @@
 
 #![no_std]
 #![feature(allocator_api)]
+#![feature(associated_type_defaults)]
 #![feature(coerce_unsized)]
 #![feature(const_maybe_uninit_zeroed)]
+#![feature(const_refs_to_cell)]
 #![feature(dispatch_from_dyn)]
 #![feature(new_uninit)]
 #![feature(offset_of)]
@@ -35,10 +37,14 @@ extern crate self as kernel;
 mod allocator;
 pub mod block;
 mod build_assert;
+pub mod device;
+pub mod driver;
 pub mod error;
 pub mod folio;
 pub mod init;
+pub mod io_mem;
 pub mod ioctl;
+pub mod irq;
 #[cfg(CONFIG_KUNIT)]
 pub mod kunit;
 #[cfg(CONFIG_NET)]
@@ -46,6 +52,7 @@ pub mod net;
 pub mod page;
 pub mod prelude;
 pub mod print;
+pub mod revocable;
 mod static_assert;
 #[doc(hidden)]
 pub mod std_vendor;
@@ -58,6 +65,8 @@ pub mod workqueue;
 #[doc(hidden)]
 pub use bindings;
 pub use macros;
+#[cfg(all(CONFIG_PCI, CONFIG_PCI_MSI))]
+pub mod pci;
 pub use uapi;
 
 #[doc(hidden)]
@@ -76,7 +85,7 @@ pub trait Module: Sized + Sync {
     /// should do.
     ///
     /// Equivalent to the `module_init` macro in the C API.
-    fn init(module: &'static ThisModule) -> error::Result<Self>;
+    fn init(name: &'static str::CStr, module: &'static ThisModule) -> error::Result<Self>;
 }
 
 /// Equivalent to `THIS_MODULE` in the C API.
