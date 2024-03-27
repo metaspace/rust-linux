@@ -22,14 +22,14 @@
 //! associated types in `Operations`, see [`Operations::RequestData`] for an
 //! example.
 //!
-//! The kernel will interface with the block evice driver by calling the method
+//! The kernel will interface with the block device driver by calling the method
 //! implementations of the `Operations` trait.
 //!
 //! IO requests are passed to the driver as [`Request`] references. The
 //! `Request` type is a wrapper around the C `struct request`. The driver must
 //! mark start of request processing by calling [`Request::start`] and end of
 //! processing by calling one of the [`Request::end`], methods. Failure to do so
-//! can lead to IO failures.
+//! can lead to deadlock or timeout errors.
 //!
 //! The `TagSet` is responsible for creating and maintaining a mapping between
 //! `Request`s and integer ids as well as carrying a pointer to the vtable
@@ -49,7 +49,7 @@
 //! drivers have to own a reference count on the `Request` type when the IO is
 //! in flight. This is to ensure that the C `struct request` instances backing
 //! the Rust `Request` instances are live while the Rust driver holds a
-//! reference to the `Request`. In addition, the conversion of an ineger tag to
+//! reference to the `Request`. In addition, the conversion of an integer tag to
 //! a `Request` via the `TagSet` would not be sound without this bookkeeping.
 //!
 //! # ⚠ Note

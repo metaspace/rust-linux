@@ -30,6 +30,7 @@ use crate::block::bio::BioIterator;
 pub struct Request<T: Operations>(Opaque<bindings::request>, PhantomData<T>);
 
 impl<T: Operations> Request<T> {
+    // TODO: Not required to be `mut`
     /// Create a `&mut Request` from a `bindings::request` pointer
     ///
     /// # Safety
@@ -52,28 +53,46 @@ impl<T: Operations> Request<T> {
         unsafe { (*self.0.get()).cmd_flags & ((1 << bindings::REQ_OP_BITS) - 1) }
     }
 
-    /// Call this to indicate to the kernel that the request has been issued by the driver
+    /// Notify the block layer that a request is going to be processed now.
+    ///
+    /// The block layer uses this hook to do proper initializations such as
+    /// starting the timeout timer. It is a requirement that block device
+    /// drivers call this function when starting to process a request.
     pub fn start(&self) {
         // SAFETY: By type invariant, `self.0` is a valid `struct request`. By
         // existence of `&mut self` we have exclusive access.
         unsafe { bindings::blk_mq_start_request(self.0.get()) };
     }
 
-    /// Call this to indicate to the kernel that the request has been completed without errors
+    /// Notify the block layer that the request has been completed without errors.
+    ///
+    /// Block device drivers must call one of the `end_ok`, `end_err` or `end`
+    /// functions when they have finished processing a request. Failure to do so
+    /// can lead to deadlock.
     pub fn end_ok(&self) {
         // SAFETY: By type invariant, `self.0` is a valid `struct request`. By
         // existence of `&mut self` we have exclusive access.
         unsafe { bindings::blk_mq_end_request(self.0.get(), bindings::BLK_STS_OK as _) };
     }
 
-    /// Call this to indicate to the kernel that the request completed with an error
+    /// Notify the block layer that the request completed with an error.
+    ///
+    /// Block device drivers must call one of the `end_ok`, `end_err` or `end`
+    /// functions when they have finished processing a request. Failure to do so
+    /// can lead to deadlock.
     pub fn end_err(&self, err: Error) {
         // SAFETY: By type invariant, `self.0` is a valid `struct request`. By
         // existence of `&mut self` we have exclusive access.
         unsafe { bindings::blk_mq_end_request(self.0.get(), err.to_blk_status()) };
     }
 
-    /// Call this to indicate that the request completed with the status indicated by `status`
+    // TODO: Assert that requests cannot be ended more than once
+    /// Notify the block layer that the request completed with the status
+    /// indicated by `status`.
+    ///
+    /// Block device drivers must call one of the `end_ok`, `end_err` or `end`
+    /// functions when they have finished processing a request. Failure to do so
+    /// can lead to deadlock.
     pub fn end(&self, status: Result) {
         if let Err(e) = status {
             self.end_err(e);
@@ -82,7 +101,13 @@ impl<T: Operations> Request<T> {
         }
     }
 
-    /// Call this to schedule defered completion of the request
+    /// Complete the request by scheduling `Operations::complete` for
+    /// execution.
+    ///
+    /// The function may be scheduled locally, via SoftIRQ or remotely via IPMI.
+    /// See `blk_mq_complete_request_remote` in [`blk-mq.c`] for details.
+    ///
+    /// [`blk-mq.c`]: srctree/block/blk-mq.c
     pub fn complete(&self) {
         // SAFETY: By type invariant, `self.0` is a valid `struct request`
         if !unsafe { bindings::blk_mq_complete_request_remote(self.0.get()) } {
@@ -122,7 +147,7 @@ impl<T: Operations> Request<T> {
         RequestDataRef::new(request)
     }
 
-    /// Returns a reference to the oer-request data associated with this request
+    /// Returns a reference to the per-request data associated with this request
     pub fn data_ref(&self) -> &T::RequestData {
         let request_ptr = self.0.get().cast::<bindings::request>();
 
@@ -139,10 +164,12 @@ impl<T: Operations> Request<T> {
     }
 }
 
+// TODO: Improve justification
 // SAFETY: It is impossible to obtain an owned or mutable `Request`, so we can
 // mark it `Send`.
 unsafe impl<T: Operations> Send for Request<T> {}
 
+// TODO: Improve justification
 // SAFETY: `Request` references can be shared across threads.
 unsafe impl<T: Operations> Sync for Request<T> {}
 
@@ -213,9 +240,9 @@ where
 impl<T> kernel::hrtimer::RawTimerCallback for RequestDataRef<T>
 where
     T: Operations,
-    T: Sync,
     T::RequestData: HasTimer<T::RequestData>,
     T::RequestData: TimerCallback<Receiver = Self>,
+    T::RequestData: Sync,
 {
     unsafe extern "C" fn run(ptr: *mut bindings::hrtimer) -> bindings::hrtimer_restart {
         // `Timer` is `repr(transparent)`

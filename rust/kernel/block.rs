@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0
 
-//! Types for working with the block layer
+//! Types for working with the block layer.
 
 pub mod bio;
 pub mod mq;

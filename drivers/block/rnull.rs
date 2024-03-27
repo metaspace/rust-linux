@@ -36,6 +36,7 @@ use kernel::new_spinlock;
 use kernel::CacheAligned;
 use kernel::sync::SpinLock;
 
+// TODO: Move parameters to their own namespace
 module! {
     type: NullBlkModule,
     name: "rnull_mod",
@@ -256,14 +257,13 @@ kernel::impl_has_timer! {
 #[vtable]
 impl Operations for NullBlkDevice {
     type RequestData = Pdu;
-    type RequestDataInit = impl PinInit<Pdu>;
     type QueueData = Pin<Box<QueueData>>;
     type HwData = ();
     type TagSetData = ();
 
     fn new_request_data(
         _tagset_data: <Self::TagSetData as ForeignOwnable>::Borrowed<'_>,
-    ) -> Self::RequestDataInit {
+    ) -> impl PinInit<Self::RequestData> {
         pin_init!( Pdu {
             timer <- kernel::hrtimer::Timer::new(),
         })

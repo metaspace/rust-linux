@@ -15,7 +15,18 @@ use core::{marker::PhantomData, ptr::NonNull};
 
 use super::TagSet;
 
-/// Implement this trait to interface blk-mq as block devices
+type ForeignBorrowed<'a, T> = <T as ForeignOwnable>::Borrowed<'a>;
+
+/// Implement this trait to interface blk-mq as block devices.
+///
+/// To implement a block device driver, implement this trait as described in the
+/// [module level documentation]. The kernel will use the implementation of the
+/// functions defined in this trait to interface a block device driver. Note:
+/// There is no need for an exit_request() implementation, because the `drop`
+/// implementation of the [`Request`] type will by automatically by the C/Rust
+/// glue logic.
+///
+/// [module level documentation]: kernel::block::mq
 #[macros::vtable]
 pub trait Operations: Sized {
     /// Data associated with a request. This data is located next to the request
@@ -24,10 +35,6 @@ pub trait Operations: Sized {
     /// To be able to handle accessing this data from interrupt context, this
     /// data must be `Sync`.
     type RequestData: Sized + Sync;
-
-    /// Initializer for `Self::RequestDta`. Used to initialize private data area
-    /// when requst structure is allocated.
-    type RequestDataInit: PinInit<Self::RequestData>;
 
     /// Data associated with the `struct request_queue` that is allocated for
     /// the `GenDisk` associated with this `Operations` implementation.
@@ -43,23 +50,22 @@ pub trait Operations: Sized {
 
     /// Called by the kernel to get an initializer for a `Pin<&mut RequestData>`.
     fn new_request_data(
-        //rq: ARef<Request<Self>>,
-        tagset_data: <Self::TagSetData as ForeignOwnable>::Borrowed<'_>,
-    ) -> Self::RequestDataInit;
+        tagset_data: ForeignBorrowed<'_, Self::TagSetData>,
+    ) -> impl PinInit<Self::RequestData>;
 
     /// Called by the kernel to queue a request with the driver. If `is_last` is
     /// `false`, the driver is allowed to defer commiting the request.
     fn queue_rq(
-        hw_data: <Self::HwData as ForeignOwnable>::Borrowed<'_>,
-        queue_data: <Self::QueueData as ForeignOwnable>::Borrowed<'_>,
+        hw_data: ForeignBorrowed<'_, Self::HwData>,
+        queue_data: ForeignBorrowed<'_, Self::QueueData>,
         rq: ARef<Request<Self>>,
         is_last: bool,
     ) -> Result;
 
     /// Called by the kernel to indicate that queued requests should be submitted
     fn commit_rqs(
-        hw_data: <Self::HwData as ForeignOwnable>::Borrowed<'_>,
-        queue_data: <Self::QueueData as ForeignOwnable>::Borrowed<'_>,
+        hw_data: ForeignBorrowed<'_, Self::HwData>,
+        queue_data: ForeignBorrowed<'_, Self::QueueData>,
     );
 
     /// Called by the kernel when the request is completed
@@ -67,13 +73,13 @@ pub trait Operations: Sized {
 
     /// Called by the kernel to allocate and initialize a driver specific hardware context data
     fn init_hctx(
-        tagset_data: <Self::TagSetData as ForeignOwnable>::Borrowed<'_>,
+        tagset_data: ForeignBorrowed<'_, Self::TagSetData>,
         hctx_idx: u32,
     ) -> Result<Self::HwData>;
 
     /// Called by the kernel to poll the device for completed requests. Only
     /// used for poll queues.
-    fn poll(_hw_data: <Self::HwData as ForeignOwnable>::Borrowed<'_>) -> bool {
+    fn poll(_hw_data: ForeignBorrowed<'_, Self::HwData>) -> bool {
         crate::build_error(crate::error::VTABLE_DEFAULT_ERROR)
     }
 
@@ -82,7 +88,6 @@ pub trait Operations: Sized {
         crate::build_error(crate::error::VTABLE_DEFAULT_ERROR)
     }
 
-    // There is no need for exit_request() because `drop` will be called.
 }
 
 /// A vtable for blk-mq to interact with a block device driver.

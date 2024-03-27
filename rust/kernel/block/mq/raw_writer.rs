@@ -3,11 +3,14 @@ use core::{
     marker::PhantomData,
 };
 
+// TODO: use a &mut slice instead?
+
 /// A mutable reference to a byte buffer where a string can be written into
 ///
 /// # Invariants
 ///
-/// * `ptr` is not aliased and valid for read and write for `len` bytes
+/// * `ptr` is not aliased and valid for read and write for `len` bytes for the
+///   duration of `'a`.
 ///
 pub(crate) struct RawWriter<'a> {
     ptr: *mut u8,
