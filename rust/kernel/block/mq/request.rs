@@ -13,7 +13,7 @@ use crate::{
     hrtimer::{HasTimer, TimerCallback},
     types::{ARef, AlwaysRefCounted, Opaque},
 };
-use core::{ffi::c_void, marker::PhantomData, ops::Deref, ptr::NonNull};
+use core::{ffi::c_void, marker::PhantomData, ptr::NonNull};
 
 use crate::block::bio::Bio;
 use crate::block::bio::BioIterator;
@@ -141,12 +141,6 @@ impl<T: Operations> Request<T> {
         unsafe { (*self.0.get()).__sector as usize }
     }
 
-    /// Returns an owned reference to the per-request data associated with this
-    /// request
-    pub fn owned_data_ref(request: ARef<Self>) -> RequestDataRef<T> {
-        RequestDataRef::new(request)
-    }
-
     /// Returns a reference to the per-request data associated with this request
     pub fn data_ref(&self) -> &T::RequestData {
         let request_ptr = self.0.get().cast::<bindings::request>();
@@ -173,50 +167,18 @@ unsafe impl<T: Operations> Send for Request<T> {}
 // SAFETY: `Request` references can be shared across threads.
 unsafe impl<T: Operations> Sync for Request<T> {}
 
-/// An owned reference to a `Request<T>`
-#[repr(transparent)]
-pub struct RequestDataRef<T: Operations> {
-    request: ARef<Request<T>>,
-}
-
-impl<T> RequestDataRef<T>
-where
-    T: Operations,
-{
-    /// Create a new instance.
-    fn new(request: ARef<Request<T>>) -> Self {
-        Self { request }
-    }
-
-    /// Get a reference to the underlying request
-    pub fn request(&self) -> &Request<T> {
-        &self.request
-    }
-}
-
-impl<T> Deref for RequestDataRef<T>
-where
-    T: Operations,
-{
-    type Target = T::RequestData;
-
-    fn deref(&self) -> &Self::Target {
-        self.request.data_ref()
-    }
-}
-
-impl<T> RawTimer for RequestDataRef<T>
+impl<T> RawTimer for ARef<Request<T>>
 where
     T: Operations,
     T::RequestData: HasTimer<T::RequestData>,
     T::RequestData: Sync,
 {
     fn schedule(self, expires: u64) {
-        let self_ptr = self.deref() as *const T::RequestData;
+        let pdu_ptr = self.data_ref() as *const T::RequestData;
         core::mem::forget(self);
 
         // SAFETY: `self_ptr` is a valid pointer to a `T::RequestData`
-        let timer_ptr = unsafe { T::RequestData::raw_get_timer(self_ptr) };
+        let timer_ptr = unsafe { T::RequestData::raw_get_timer(pdu_ptr) };
 
         // `Timer` is `repr(transparent)`
         let c_timer_ptr = timer_ptr.cast::<bindings::hrtimer>();
@@ -237,11 +199,11 @@ where
     }
 }
 
-impl<T> kernel::hrtimer::RawTimerCallback for RequestDataRef<T>
+impl<T> kernel::hrtimer::RawTimerCallback for ARef<Request<T>>
 where
     T: Operations,
     T::RequestData: HasTimer<T::RequestData>,
-    T::RequestData: TimerCallback<Receiver = Self>,
+    T::RequestData: TimerCallback<Receiver = ARef<Request<T>>>,
     T::RequestData: Sync,
 {
     unsafe extern "C" fn run(ptr: *mut bindings::hrtimer) -> bindings::hrtimer_restart {
@@ -257,11 +219,11 @@ where
         let request_ptr = unsafe { bindings::blk_mq_rq_from_pdu(receiver_ptr.cast::<c_void>()) };
 
         // SAFETY: We own a refcount that we leaked during `RawTimer::schedule()`
-        let dref = RequestDataRef::new(unsafe {
+        let aref = unsafe {
             ARef::from_raw(NonNull::new_unchecked(request_ptr.cast::<Request<T>>()))
-        });
+        };
 
-        T::RequestData::run(dref);
+        T::RequestData::run(aref);
 
         bindings::hrtimer_restart_HRTIMER_NORESTART
     }

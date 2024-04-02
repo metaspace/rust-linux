@@ -20,7 +20,7 @@ use kernel::{
     bindings,
     block::{
         bio::Segment,
-        mq::{self, GenDisk, Operations, RequestDataRef, TagSet},
+        mq::{self, GenDisk, Operations, TagSet},
     },
     error::Result,
     folio::*,
@@ -242,11 +242,12 @@ struct Pdu {
     timer: kernel::hrtimer::Timer<Self>,
 }
 
-impl TimerCallback for Pdu {
-    type Receiver = RequestDataRef<NullBlkDevice>;
+impl TimerCallback for Pdu
+{
+    type Receiver = ARef<mq::Request<NullBlkDevice>>;
 
     fn run(this: Self::Receiver) {
-        this.request().end_ok();
+        this.end_ok();
     }
 }
 
@@ -297,7 +298,7 @@ impl Operations for NullBlkDevice {
             IRQMode::None => rq.end_ok(),
             IRQMode::Soft => rq.complete(),
             IRQMode::Timer => {
-                mq::Request::owned_data_ref(rq).schedule(queue_data.completion_time_nsec)
+                rq.schedule(queue_data.completion_time_nsec)
             }
         }
 
