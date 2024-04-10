@@ -6,10 +6,23 @@ rustdoc_output := $(objtree)/Documentation/output/rust/rustdoc
 obj-$(CONFIG_RUST) += core.o compiler_builtins.o
 always-$(CONFIG_RUST) += exports_core_generated.h
 
-# Missing prototypes are expected in the helpers since these are exported
-# for Rust only, thus there is no header nor prototypes.
-obj-$(CONFIG_RUST) += helpers.o
-CFLAGS_REMOVE_helpers.o = -Wmissing-prototypes -Wmissing-declarations
+RUST_HELPERS := \
+	blk-mq \
+	bug \
+	build_assert \
+	build_bug \
+	err \
+	kunit \
+	mutex \
+	refcount \
+	signal \
+	spinlock\
+	task \
+	wait \
+	workqueue
+
+export RUST_HELPERS
+obj-y += helpers/
 
 always-$(CONFIG_RUST) += libmacros.so
 no-clean-files += libmacros.so
@@ -338,6 +351,10 @@ quiet_cmd_bindgen = BINDGEN $@
 		-o $@ -- $(bindgen_c_flags_final) -DMODULE \
 		$(bindgen_target_cflags) $(bindgen_target_extra)
 
+quiet_cmd_cat = CAT     $@
+      cmd_cat = \
+	cat $(patsubst %,$(srctree)/$(src)/helpers/%.c, $(RUST_HELPERS)) > $@
+
 $(obj)/bindings/bindings_generated.rs: private bindgen_target_flags = \
     $(shell grep -Ev '^#|^$$' $(srctree)/$(src)/bindgen_parameters)
 $(obj)/bindings/bindings_generated.rs: private bindgen_target_extra = ; \
@@ -352,9 +369,9 @@ $(obj)/uapi/uapi_generated.rs: $(src)/uapi/uapi_helper.h \
     $(src)/bindgen_parameters FORCE
 	$(call if_changed_dep,bindgen)
 
-# See `CFLAGS_REMOVE_helpers.o` above. In addition, Clang on C does not warn
-# with `-Wmissing-declarations` (unlike GCC), so it is not strictly needed here
-# given it is `libclang`; but for consistency, future Clang changes and/or
+# See `ccflags-remove-y` in helpers/Makefile . In addition, Clang on C does not
+# warn with `-Wmissing-declarations` (unlike GCC), so it is not strictly needed
+# here given it is `libclang`; but for consistency, future Clang changes and/or
 # a potential future GCC backend for `bindgen`, we disable it too.
 $(obj)/bindings/bindings_helpers_generated.rs: private bindgen_target_flags = \
     --blocklist-type '.*' --allowlist-var '' \
@@ -363,8 +380,12 @@ $(obj)/bindings/bindings_helpers_generated.rs: private bindgen_target_cflags = \
     -I$(objtree)/$(obj) -Wno-missing-prototypes -Wno-missing-declarations
 $(obj)/bindings/bindings_helpers_generated.rs: private bindgen_target_extra = ; \
     sed -Ei 's/pub fn rust_helper_([a-zA-Z0-9_]*)/#[link_name="rust_helper_\1"]\n    pub fn \1/g' $@
-$(obj)/bindings/bindings_helpers_generated.rs: $(src)/helpers.c FORCE
+$(obj)/bindings/bindings_helpers_generated.rs: $(obj)/helpers/helpers_combined.c FORCE
 	$(call if_changed_dep,bindgen)
+
+targets += helpers/helpers_combined.c
+$(obj)/helpers/helpers_combined.c: $(patsubst %,$(src)/helpers/%.c, $(RUST_HELPERS)) FORCE
+	$(call if_changed,cat)
 
 quiet_cmd_exports = EXPORTS $@
       cmd_exports = \
