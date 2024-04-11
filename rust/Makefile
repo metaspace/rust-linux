@@ -382,8 +382,10 @@ $(obj)/bindings/bindings_helpers_generated.rs: private bindgen_target_extra = ; 
     sed -Ei 's/pub fn rust_helper_([a-zA-Z0-9_]*)/#[link_name="rust_helper_\1"]\n    pub fn \1/g' $@
 $(obj)/bindings/bindings_helpers_generated.rs: $(obj)/helpers/helpers_combined.c FORCE
 	$(call if_changed_dep,bindgen)
-$(obj)/helpers/helpers_combined.c: $(patsubst %,$(src)/helpers/%.c, $(RUST_HELPERS))
-	$(call cmd,cat)
+
+targets += helpers/helpers_combined.c
+$(obj)/helpers/helpers_combined.c: $(patsubst %,$(src)/helpers/%.c, $(RUST_HELPERS)) FORCE
+	$(call if_changed,cat)
 
 quiet_cmd_exports = EXPORTS $@
       cmd_exports = \
