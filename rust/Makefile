@@ -6,7 +6,7 @@ rustdoc_output := $(objtree)/Documentation/output/rust/rustdoc
 obj-$(CONFIG_RUST) += core.o compiler_builtins.o
 always-$(CONFIG_RUST) += exports_core_generated.h
 
-RUST_HELPERS = \
+RUST_HELPERS := \
 	bug \
 	build_assert \
 	build_bug \
