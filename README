@@ -1,18 +1,21 @@
-Linux kernel
-============
 
-There are several guides for kernel developers and users. These guides can
-be rendered in a number of formats, like HTML and PDF. Please read
-Documentation/admin-guide/README.rst first.
+# Rust PCI bindings for Linux
 
-In order to build the documentation, use ``make htmldocs`` or
-``make pdfdocs``.  The formatted documentation can also be read online at:
+⚠️ The patches are work in progress ⚠️
 
-    https://www.kernel.org/doc/html/latest/
+This tree hosts Rust bindings needed to interact with PCI devices, partially covering the following kernel infrastructure:
 
-There are various text files in the Documentation/ subdirectory,
-several of them using the reStructuredText markup notation.
+* device
+* pci
+* irq
+* iomem
 
-Please read the Documentation/process/changes.rst file, as it contains the
-requirements for building and running the kernel, and information about
-the problems which may result by upgrading your kernel.
+This branch is based on
+
+ git https://gitlab.freedesktop.org/dakr/nova.git rust/rust-device
+
+Please note that these patches
+
+* are full of todo items
+* are missing safety comments
+* were not reviewed on list for soundness
