@@ -27,22 +27,3 @@ void rust_helper_bio_advance_iter_single(const struct bio *bio,
 	bio_advance_iter_single(bio, iter, bytes);
 }
 EXPORT_SYMBOL_GPL(rust_helper_bio_advance_iter_single);
-
-// ----
-bool rust_helper_req_ref_inc_not_zero(struct request *req)
-{
-	return atomic_inc_not_zero(&req->ref);
-}
-EXPORT_SYMBOL_GPL(rust_helper_req_ref_inc_not_zero);
-
-bool rust_helper_req_ref_put_and_test(struct request *req)
-{
-	return atomic_dec_and_test(&req->ref);
-}
-EXPORT_SYMBOL_GPL(rust_helper_req_ref_put_and_test);
-
-void rust_helper_blk_mq_free_request_internal(struct request *req)
-{
-	__blk_mq_free_request(req);
-}
-EXPORT_SYMBOL_GPL(rust_helper_blk_mq_free_request_internal);

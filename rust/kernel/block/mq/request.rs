@@ -9,11 +9,16 @@ use kernel::hrtimer::RawTimer;
 use crate::{
     bindings,
     block::mq::Operations,
-    error::{Error, Result},
+    error::Result,
     hrtimer::{HasTimer, TimerCallback},
     types::{ARef, AlwaysRefCounted, Opaque},
 };
-use core::{ffi::c_void, marker::PhantomData, ptr::NonNull};
+use core::{
+    ffi::c_void,
+    marker::PhantomData,
+    ptr::{addr_of_mut, NonNull},
+    sync::atomic::AtomicU64,
+};
 
 use crate::block::bio::Bio;
 use crate::block::bio::BioIterator;
@@ -22,7 +27,10 @@ use crate::block::bio::BioIterator;
 ///
 /// # Invariants
 ///
-/// * `self.0` is a valid `struct request` created by the C portion of the kernel
+/// * `self.0` is a valid `struct request` created by the C portion of the kernel.
+/// * The private data area associated with this request must be initialized and
+///   valid as `RequestDataWrapper<T>`.
+/// * TODO
 /// * `self` is reference counted. a call to `req_ref_inc_not_zero` keeps the
 ///    instance alive at least until a matching call to `req_ref_put_and_test`
 ///
@@ -47,6 +55,10 @@ impl<T: Operations> Request<T> {
         unsafe { &mut *(ptr.cast::<Self>()) }
     }
 
+    pub(crate) fn as_ptr(&self) -> *mut bindings::request {
+        self.0.get().cast::<bindings::request>()
+    }
+
     /// Get the command identifier for the request
     pub fn command(&self) -> u32 {
         // SAFETY: By C API contract and type invariant, `cmd_flags` is valid for read
@@ -65,14 +77,22 @@ impl<T: Operations> Request<T> {
     }
 
     /// Notify the block layer that the request has been completed without errors.
-    ///
-    /// Block device drivers must call one of the `end_ok`, `end_err` or `end`
-    /// functions when they have finished processing a request. Failure to do so
-    /// can lead to deadlock.
-    pub fn end_ok(&self) {
+    pub fn end_ok(this: ARef<Self>) -> Result<(), ARef<Self>> {
+        let refcount = this.wrapper_ref().refcount.load(Ordering::Relaxed);
+
+        if refcount != 1 {
+            return Err(this);
+        }
+
+        let request_ptr = this.as_ptr();
+
+        core::mem::forget(this);
+
         // SAFETY: By type invariant, `self.0` is a valid `struct request`. By
         // existence of `&mut self` we have exclusive access.
-        unsafe { bindings::blk_mq_end_request(self.0.get(), bindings::BLK_STS_OK as _) };
+        unsafe { bindings::blk_mq_end_request(request_ptr, bindings::BLK_STS_OK as _) };
+
+        Ok(())
     }
 
     /// Notify the block layer that the request completed with an error.
@@ -80,6 +100,7 @@ impl<T: Operations> Request<T> {
     /// Block device drivers must call one of the `end_ok`, `end_err` or `end`
     /// functions when they have finished processing a request. Failure to do so
     /// can lead to deadlock.
+    #[cfg(disable)]
     pub fn end_err(&self, err: Error) {
         // SAFETY: By type invariant, `self.0` is a valid `struct request`. By
         // existence of `&mut self` we have exclusive access.
@@ -93,6 +114,7 @@ impl<T: Operations> Request<T> {
     /// Block device drivers must call one of the `end_ok`, `end_err` or `end`
     /// functions when they have finished processing a request. Failure to do so
     /// can lead to deadlock.
+    #[cfg(disable)]
     pub fn end(&self, status: Result) {
         if let Err(e) = status {
             self.end_err(e);
@@ -108,10 +130,14 @@ impl<T: Operations> Request<T> {
     /// See `blk_mq_complete_request_remote` in [`blk-mq.c`] for details.
     ///
     /// [`blk-mq.c`]: srctree/block/blk-mq.c
-    pub fn complete(&self) {
+    pub fn complete(this: ARef<Self>) {
+        let ptr = this.into_raw().cast::<bindings::request>();
         // SAFETY: By type invariant, `self.0` is a valid `struct request`
-        if !unsafe { bindings::blk_mq_complete_request_remote(self.0.get()) } {
-            T::complete(self);
+        if !unsafe { bindings::blk_mq_complete_request_remote(ptr) } {
+            let this =
+                // SAFETY: We released a refcount above that we can reclaim here.
+                unsafe { ARef::from_raw(NonNull::new_unchecked(Request::from_ptr_mut(ptr))) };
+            T::complete(this);
         }
     }
 
@@ -141,20 +167,73 @@ impl<T: Operations> Request<T> {
         unsafe { (*self.0.get()).__sector as usize }
     }
 
-    /// Returns a reference to the per-request data associated with this request
+    /// Return a pointer to the `RequestDataWrapper` stored in the private area
+    /// of the request structure.
+    ///
+    /// # Safety
+    ///
+    /// - `this` must point to a valid allocation.
+    pub(crate) unsafe fn wrapper_ptr(this: *mut Self) -> NonNull<RequestDataWrapper<T>> {
+        let request_ptr = this.cast::<bindings::request>();
+        let wrapper_ptr =
+            // SAFETY: By safety requirements for this function, `this` is a
+            // valid allocation.
+            unsafe { bindings::blk_mq_rq_to_pdu(request_ptr).cast::<RequestDataWrapper<T>>() };
+        // SAFETY: By C api contract, wrapper_ptr points to a valid allocation
+        // and is not null.
+        unsafe { NonNull::new_unchecked(wrapper_ptr) }
+    }
+
+    /// Return a reference to the `RequestDataWrapper` stored in the private
+    /// area of the request structure.
+    pub(crate) fn wrapper_ref(&self) -> &RequestDataWrapper<T> {
+        // SAFETY: By type invariant, `self.0` is a valid alocation. Further,
+        // the private data associated with this request is initialized and
+        // valid. The existence of `&self` guarantees that the private data is
+        // valid as a shared reference.
+        unsafe { Self::wrapper_ptr(self as *const Self as *mut Self).as_ref() }
+    }
+
+    /// Return a reference to the per-request data associated with this request.
     pub fn data_ref(&self) -> &T::RequestData {
-        let request_ptr = self.0.get().cast::<bindings::request>();
+        &self.wrapper_ref().data
+    }
+}
 
-        // SAFETY: `request_ptr` is a valid `struct request` because `ARef` is
-        // `repr(transparent)`
-        let p: *mut c_void = unsafe { bindings::blk_mq_rq_to_pdu(request_ptr) };
+/// A wrapper around data stored in the private area of the C `struct request`.
+pub(crate) struct RequestDataWrapper<T: Operations> {
+    refcount: AtomicU64,
+    data: T::RequestData,
+}
 
-        let p = p.cast::<T::RequestData>();
+impl<T: Operations> RequestDataWrapper<T> {
+    /// Return a reference to the refcount of the request that is embedding
+    /// `self`.
+    pub(crate) fn refcount(&self) -> &AtomicU64 {
+        &self.refcount
+    }
 
-        // SAFETY: By C API contract, `p` is initialized by a call to
-        // `OperationsVTable::init_request_callback()`. By existence of `&self`
-        // it must be valid for use as a shared reference.
-        unsafe { &*p }
+    /// Return a pointer to the refcount of the request that is embedding the
+    /// pointee of `this`.
+    ///
+    /// # Safety
+    ///
+    /// - `this` must point to a live allocation of at least the size of `Self`.
+    pub(crate) unsafe fn refcount_ptr(this: *mut Self) -> *mut AtomicU64 {
+        // SAFETY: Because of the safety requirements of this function, the
+        // field projection is safe.
+        unsafe { addr_of_mut!((*this).refcount) }
+    }
+
+    /// Return a pointer to the `data` field of the `Self` pointed to by `this`.
+    ///
+    /// # Safety
+    ///
+    /// - `this` must point to a live allocation of at least the size of `Self`.
+    pub(crate) unsafe fn data_ptr(this: *mut Self) -> *mut T::RequestData {
+        // SAFETY: Because of the safety requirements of this function, the
+        // field projection is safe.
+        unsafe { addr_of_mut!((*this).data) }
     }
 }
 
@@ -214,19 +293,55 @@ where
         // enqueing the timer, so it is a `Timer<T::RequestData>` embedded in a `T::RequestData`
         let receiver_ptr = unsafe { T::RequestData::timer_container_of(timer_ptr) };
 
+        // TODO: offset wrapper
+
         // SAFETY: The pointer was returned by `T::timer_container_of` so it
         // points to a valid `T::RequestData`
         let request_ptr = unsafe { bindings::blk_mq_rq_from_pdu(receiver_ptr.cast::<c_void>()) };
 
         // SAFETY: We own a refcount that we leaked during `RawTimer::schedule()`
-        let aref = unsafe {
-            ARef::from_raw(NonNull::new_unchecked(request_ptr.cast::<Request<T>>()))
-        };
+        let aref =
+            unsafe { ARef::from_raw(NonNull::new_unchecked(request_ptr.cast::<Request<T>>())) };
 
         T::RequestData::run(aref);
 
         bindings::hrtimer_restart_HRTIMER_NORESTART
     }
+}
+
+use core::sync::atomic::Ordering;
+
+/// Store the result of `op(target.load())` in target, returning new value of
+/// taret.
+fn atomic_relaxed_op_return(target: &AtomicU64, op: impl Fn(u64) -> u64) -> u64 {
+    let mut old = target.load(Ordering::Relaxed);
+    loop {
+        match target.compare_exchange_weak(old, op(old), Ordering::Relaxed, Ordering::Relaxed) {
+            Ok(_) => break,
+            Err(x) => {
+                old = x;
+            }
+        }
+    }
+
+    op(old)
+}
+
+/// Store the result of `op(target.load)` in `target` if `target.load() !=
+/// pred`, returning previous value of target
+fn atomic_relaxed_op_unless(target: &AtomicU64, op: impl Fn(u64) -> u64, pred: u64) -> bool {
+    let x = target.load(Ordering::Relaxed);
+    loop {
+        if x == pred {
+            break;
+        }
+        if let Ok(_) = target.compare_exchange_weak(x, op(x), Ordering::Relaxed, Ordering::Relaxed)
+        {
+            break;
+        }
+    }
+
+    x == pred
 }
 
 // SAFETY: All instances of `Request<T>` are reference counted. This
@@ -235,24 +350,28 @@ where
 // decrement is executed.
 unsafe impl<T: Operations> AlwaysRefCounted for Request<T> {
     fn inc_ref(&self) {
-        // SAFETY: By type invariant `self.0` is a valid `struct reqeust`
+        let refcount = &self.wrapper_ref().refcount;
+
         #[cfg_attr(not(CONFIG_DEBUG_MISC), allow(unused_variables))]
-        let updated = unsafe { bindings::req_ref_inc_not_zero(self.0.get()) };
+        let updated = atomic_relaxed_op_unless(refcount, |x| x + 1, 0);
+
         #[cfg(CONFIG_DEBUG_MISC)]
         if !updated {
             crate::pr_err!("Request refcount zero on clone");
+            panic!()
         }
     }
 
     unsafe fn dec_ref(obj: core::ptr::NonNull<Self>) {
-        // SAFETY: By type invariant `self.0` is a valid `struct reqeust`
-        let zero = unsafe { bindings::req_ref_put_and_test(obj.as_ref().0.get()) };
-        if zero {
-            // SAFETY: By type invariant of `self` we have the last reference to
-            // `obj` and it is safe to free it.
-            unsafe {
-                bindings::blk_mq_free_request_internal(obj.as_ptr().cast::<bindings::request>())
-            };
+        let wrapper_ptr = unsafe { Self::wrapper_ptr(obj.as_ptr()).as_ptr() };
+        let refcount = unsafe { &*addr_of_mut!((*wrapper_ptr).refcount) };
+
+        #[cfg_attr(not(CONFIG_DEBUG_MISC), allow(unused_variables))]
+        let new_refcount = atomic_relaxed_op_return(refcount, |x| x - 1);
+
+        #[cfg(CONFIG_DEBUG_MISC)]
+        if new_refcount == 0 {
+            panic!("Request reached refcount zero in Rust abstractions");
         }
     }
 }

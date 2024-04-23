@@ -33,8 +33,8 @@ use kernel::{
 };
 
 use kernel::new_spinlock;
-use kernel::CacheAligned;
 use kernel::sync::SpinLock;
+use kernel::CacheAligned;
 
 // TODO: Move parameters to their own namespace
 module! {
@@ -242,12 +242,13 @@ struct Pdu {
     timer: kernel::hrtimer::Timer<Self>,
 }
 
-impl TimerCallback for Pdu
-{
+impl TimerCallback for Pdu {
     type Receiver = ARef<mq::Request<NullBlkDevice>>;
 
     fn run(this: Self::Receiver) {
-        this.end_ok();
+        mq::Request::end_ok(this)
+            .map_err(|_e| kernel::error::code::EIO)
+            .expect("Failed to complete request");
     }
 }
 
@@ -293,13 +294,12 @@ impl Operations for NullBlkDevice {
             drop(guard);
         }
 
-
         match queue_data.irq_mode {
-            IRQMode::None => rq.end_ok(),
-            IRQMode::Soft => rq.complete(),
-            IRQMode::Timer => {
-                rq.schedule(queue_data.completion_time_nsec)
-            }
+            IRQMode::None => mq::Request::end_ok(rq)
+                .map_err(|_e| kernel::error::code::EIO)
+                .expect("Failed to complete request"),
+            IRQMode::Soft => mq::Request::complete(rq),
+            IRQMode::Timer => rq.schedule(queue_data.completion_time_nsec),
         }
 
         Ok(())
@@ -311,8 +311,10 @@ impl Operations for NullBlkDevice {
     ) {
     }
 
-    fn complete(rq: &mq::Request<Self>) {
-        rq.end_ok();
+    fn complete(rq: ARef<mq::Request<Self>>) {
+        mq::Request::end_ok(rq)
+            .map_err(|_e| kernel::error::code::EIO)
+            .expect("Failed to complete request")
     }
 
     fn init_hctx(
