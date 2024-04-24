@@ -103,16 +103,22 @@ pub trait Operations: Sized {
 pub(crate) struct OperationsVTable<T: Operations>(PhantomData<T>);
 
 impl<T: Operations> OperationsVTable<T> {
-    // # Safety
-    //
-    // - The caller of this function must ensure that `hctx` and `bd` are valid
-    //   and initialized. The pointees must outlive this function.
-    // - `hctx->driver_data` must be a pointer created by a call to
-    //   `Self::init_hctx_callback()` and the pointee must outlive this
-    //   function.
-    // - This function must not be called with a `hctx` for which
-    //   `Self::exit_hctx_callback()` has been called.
-    // - (*bd).rq must point to a valid `bindings:request`.
+
+    /// This function is called by the C kernel. A pointer to this function is
+    /// installed in the `blk_mq_ops` vtable for the driver.
+    ///
+    /// # Safety
+    ///
+    /// - The caller of this function must ensure that `hctx` and `bd` are valid
+    ///   and initialized. The pointees must outlive this function.
+    /// - `hctx->driver_data` must be a pointer created by a call to
+    ///   `Self::init_hctx_callback()` and the pointee must outlive this
+    ///   function.
+    /// - This function must not be called with a `hctx` for which
+    ///   `Self::exit_hctx_callback()` has been called.
+    /// - (*bd).rq must point to a valid `bindings:request` for which the private
+    ///   data area was initialized by a call to
+    ///   `OperationsVTable<T>::init_request_callback`
     unsafe extern "C" fn queue_rq_callback(
         hctx: *mut bindings::blk_mq_hw_ctx,
         bd: *const bindings::blk_mq_queue_data,
@@ -148,6 +154,7 @@ impl<T: Operations> OperationsVTable<T> {
             // SAFETY: `bd` is valid as required by the safety requirement for this function.
             unsafe { (*bd).last },
         );
+
         if let Err(e) = ret {
             e.to_blk_status()
         } else {
@@ -155,6 +162,9 @@ impl<T: Operations> OperationsVTable<T> {
         }
     }
 
+    /// This function is called by the C kernel. A pointer to this function is
+    /// installed in the `blk_mq_ops` vtable for the driver.
+    ///
     /// # Safety
     ///
     /// This function may only be called by blk-mq C infrastructure. The caller
@@ -175,6 +185,9 @@ impl<T: Operations> OperationsVTable<T> {
         T::commit_rqs(hw_data, queue_data)
     }
 
+    /// This function is called by the C kernel. A pointer to this function is
+    /// installed in the `blk_mq_ops` vtable for the driver.
+    ///
     /// # Safety
     ///
     /// This function may only be called by blk-mq C infrastructure. `rq` must
@@ -184,12 +197,16 @@ impl<T: Operations> OperationsVTable<T> {
         // SAFETY: rq is valid as per the safety requirements for this function.
         let request = unsafe { Request::from_ptr_mut(rq) };
 
-        // SAFETY: This function can only be called through `Request::complete`.
-        // We leaked a refcount then which we pick back up now.
+        // SAFETY: This function can only be dispatched through
+        // `Request::complete`. We leaked a refcount then which we pick back up
+        // now.
         let aref = unsafe { ARef::from_raw(NonNull::new_unchecked(request)) };
         T::complete(aref);
     }
 
+    /// This function is called by the C kernel. A pointer to this function is
+    /// installed in the `blk_mq_ops` vtable for the driver.
+    ///
     /// # Safety
     ///
     /// This function may only be called by blk-mq C infrastructure. `hctx` must
@@ -206,6 +223,9 @@ impl<T: Operations> OperationsVTable<T> {
         T::poll(hw_data).into()
     }
 
+    /// This function is called by the C kernel. A pointer to this function is
+    /// installed in the `blk_mq_ops` vtable for the driver.
+    ///
     /// # Safety
     ///
     /// This function may only be called by blk-mq C infrastructure.
@@ -233,6 +253,9 @@ impl<T: Operations> OperationsVTable<T> {
         })
     }
 
+    /// This function is called by the C kernel. A pointer to this function is
+    /// installed in the `blk_mq_ops` vtable for the driver.
+    ///
     /// # Safety
     ///
     /// This function may only be called by blk-mq C infrastructure. `hctx` must
@@ -251,6 +274,9 @@ impl<T: Operations> OperationsVTable<T> {
         unsafe { T::HwData::from_foreign(ptr) };
     }
 
+    /// This function is called by the C kernel. A pointer to this function is
+    /// installed in the `blk_mq_ops` vtable for the driver.
+    ///
     /// # Safety
     ///
     /// This function may only be called by blk-mq C infrastructure. `set` must point to an initialized `TagSet<T>`.
@@ -261,11 +287,12 @@ impl<T: Operations> OperationsVTable<T> {
         _numa_node: core::ffi::c_uint,
     ) -> core::ffi::c_int {
         from_result(|| {
-            // SAFETY: The tagset invariants guarantee that all requests are allocated with extra memory
-            // for the request data.
+            // SAFETY: The `blk_mq_tag_set` invariants guarantee that all
+            // requests are allocated with extra memory for the request data.
             let pdu = unsafe { bindings::blk_mq_rq_to_pdu(rq) }.cast::<RequestDataWrapper<T>>();
 
-            // SAFETY: The refcount field is allocated but not initialized.
+            // SAFETY: The refcount field is allocated but not initialized, this
+            // valid for write.
             unsafe { RequestDataWrapper::refcount_ptr(pdu).write(AtomicU64::new(0)) };
 
             // SAFETY: Because `set` is a `TagSet<T>`, `driver_data` comes from
@@ -284,6 +311,9 @@ impl<T: Operations> OperationsVTable<T> {
         })
     }
 
+    /// This function is called by the C kernel. A pointer to this function is
+    /// installed in the `blk_mq_ops` vtable for the driver.
+    ///
     /// # Safety
     ///
     /// This function may only be called by blk-mq C infrastructure. `rq` must
@@ -302,6 +332,9 @@ impl<T: Operations> OperationsVTable<T> {
         unsafe { core::ptr::drop_in_place(pdu) };
     }
 
+    /// This function is called by the C kernel. A pointer to this function is
+    /// installed in the `blk_mq_ops` vtable for the driver.
+    ///
     /// # Safety
     ///
     /// This function may only be called by blk-mq C infrastructure. `tag_set`
