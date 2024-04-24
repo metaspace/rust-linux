@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0
 
-#include <linux/export.h>
 #include <linux/spinlock.h>
+#include "helpers.h"
 
-void rust_helper___spin_lock_init(spinlock_t *lock, const char *name,
+__rust_helper void rust_helper___spin_lock_init(spinlock_t *lock, const char *name,
 				  struct lock_class_key *key)
 {
 #ifdef CONFIG_DEBUG_SPINLOCK
@@ -13,12 +13,12 @@ void rust_helper___spin_lock_init(spinlock_t *lock, const char *name,
 #endif
 }
 
-void rust_helper_spin_lock(spinlock_t *lock)
+__rust_helper void rust_helper_spin_lock(spinlock_t *lock)
 {
 	spin_lock(lock);
 }
 
-void rust_helper_spin_unlock(spinlock_t *lock)
+__rust_helper void rust_helper_spin_unlock(spinlock_t *lock)
 {
 	spin_unlock(lock);
 }
