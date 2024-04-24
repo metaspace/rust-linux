@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0
 
 #include <linux/bug.h>
+#include "helpers.h"
 
-__noreturn void rust_helper_BUG(void)
+__rust_helper __noreturn void rust_helper_BUG(void)
 {
 	BUG();
 }
@@ -35,8 +36,9 @@ static_assert(
 
 #include <linux/export.h>
 #include <linux/errname.h>
+#include "helpers.h"
 
-const char *rust_helper_errname(int err)
+__rust_helper const char *rust_helper_errname(int err)
 {
 	return errname(err);
 }
@@ -44,18 +46,19 @@ const char *rust_helper_errname(int err)
 
 #include <linux/err.h>
 #include <linux/export.h>
+#include "helpers.h"
 
-__force void *rust_helper_ERR_PTR(long err)
+__rust_helper __force void *rust_helper_ERR_PTR(long err)
 {
 	return ERR_PTR(err);
 }
 
-bool rust_helper_IS_ERR(__force const void *ptr)
+__rust_helper bool rust_helper_IS_ERR(__force const void *ptr)
 {
 	return IS_ERR(ptr);
 }
 
-long rust_helper_PTR_ERR(__force const void *ptr)
+__rust_helper long rust_helper_PTR_ERR(__force const void *ptr)
 {
 	return PTR_ERR(ptr);
 }
@@ -63,8 +66,9 @@ long rust_helper_PTR_ERR(__force const void *ptr)
 
 #include <kunit/test-bug.h>
 #include <linux/export.h>
+#include "helpers.h"
 
-struct kunit *rust_helper_kunit_get_current_test(void)
+__rust_helper struct kunit *rust_helper_kunit_get_current_test(void)
 {
 	return kunit_get_current_test();
 }
@@ -72,8 +76,9 @@ struct kunit *rust_helper_kunit_get_current_test(void)
 
 #include <linux/export.h>
 #include <linux/mutex.h>
+#include "helpers.h"
 
-void rust_helper_mutex_lock(struct mutex *lock)
+__rust_helper void rust_helper_mutex_lock(struct mutex *lock)
 {
 	mutex_lock(lock);
 }
@@ -81,18 +86,19 @@ void rust_helper_mutex_lock(struct mutex *lock)
 
 #include <linux/export.h>
 #include <linux/refcount.h>
+#include "helpers.h"
 
-refcount_t rust_helper_REFCOUNT_INIT(int n)
+__rust_helper refcount_t rust_helper_REFCOUNT_INIT(int n)
 {
 	return (refcount_t)REFCOUNT_INIT(n);
 }
 
-void rust_helper_refcount_inc(refcount_t *r)
+__rust_helper void rust_helper_refcount_inc(refcount_t *r)
 {
 	refcount_inc(r);
 }
 
-bool rust_helper_refcount_dec_and_test(refcount_t *r)
+__rust_helper bool rust_helper_refcount_dec_and_test(refcount_t *r)
 {
 	return refcount_dec_and_test(r);
 }
@@ -100,8 +106,9 @@ bool rust_helper_refcount_dec_and_test(refcount_t *r)
 
 #include <linux/export.h>
 #include <linux/sched/signal.h>
+#include "helpers.h"
 
-int rust_helper_signal_pending(struct task_struct *t)
+__rust_helper int rust_helper_signal_pending(struct task_struct *t)
 {
 	return signal_pending(t);
 }
@@ -109,8 +116,9 @@ int rust_helper_signal_pending(struct task_struct *t)
 
 #include <linux/export.h>
 #include <linux/spinlock.h>
+#include "helpers.h"
 
-void rust_helper___spin_lock_init(spinlock_t *lock, const char *name,
+__rust_helper void rust_helper___spin_lock_init(spinlock_t *lock, const char *name,
 				  struct lock_class_key *key)
 {
 #ifdef CONFIG_DEBUG_SPINLOCK
@@ -120,12 +128,12 @@ void rust_helper___spin_lock_init(spinlock_t *lock, const char *name,
 #endif
 }
 
-void rust_helper_spin_lock(spinlock_t *lock)
+__rust_helper void rust_helper_spin_lock(spinlock_t *lock)
 {
 	spin_lock(lock);
 }
 
-void rust_helper_spin_unlock(spinlock_t *lock)
+__rust_helper void rust_helper_spin_unlock(spinlock_t *lock)
 {
 	spin_unlock(lock);
 }
@@ -133,18 +141,19 @@ void rust_helper_spin_unlock(spinlock_t *lock)
 
 #include <linux/export.h>
 #include <linux/sched/task.h>
+#include "helpers.h"
 
-struct task_struct *rust_helper_get_current(void)
+__rust_helper struct task_struct *rust_helper_get_current(void)
 {
 	return current;
 }
 
-void rust_helper_get_task_struct(struct task_struct *t)
+__rust_helper void rust_helper_get_task_struct(struct task_struct *t)
 {
 	get_task_struct(t);
 }
 
-void rust_helper_put_task_struct(struct task_struct *t)
+__rust_helper void rust_helper_put_task_struct(struct task_struct *t)
 {
 	put_task_struct(t);
 }
@@ -152,8 +161,9 @@ void rust_helper_put_task_struct(struct task_struct *t)
 
 #include <linux/export.h>
 #include <linux/wait.h>
+#include "helpers.h"
 
-void rust_helper_init_wait(struct wait_queue_entry *wq_entry)
+__rust_helper void rust_helper_init_wait(struct wait_queue_entry *wq_entry)
 {
 	init_wait(wq_entry);
 }
@@ -161,8 +171,9 @@ void rust_helper_init_wait(struct wait_queue_entry *wq_entry)
 
 #include <linux/export.h>
 #include <linux/workqueue.h>
+#include "helpers.h"
 
-void rust_helper_init_work_with_key(struct work_struct *work, work_func_t func,
+__rust_helper void rust_helper_init_work_with_key(struct work_struct *work, work_func_t func,
 				    bool onstack, const char *name,
 				    struct lock_class_key *key)
 {
