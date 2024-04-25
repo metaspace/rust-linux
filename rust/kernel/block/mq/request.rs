@@ -55,10 +55,6 @@ impl<T: Operations> Request<T> {
         unsafe { &mut *(ptr.cast::<Self>()) }
     }
 
-    pub(crate) fn as_ptr(&self) -> *mut bindings::request {
-        self.0.get().cast::<bindings::request>()
-    }
-
     /// Get the command identifier for the request
     pub fn command(&self) -> u32 {
         // SAFETY: By C API contract and type invariant, `cmd_flags` is valid for read
@@ -78,14 +74,12 @@ impl<T: Operations> Request<T> {
 
     /// Notify the block layer that the request has been completed without errors.
     pub fn end_ok(this: ARef<Self>) -> Result<(), ARef<Self>> {
-        let refcount = this.wrapper_ref().refcount.load(Ordering::Relaxed);
-
-        if refcount != 1 {
+        // We can race with `TagSet::tag_to_rq`
+        if let Err(_old) =  this.wrapper_ref().refcount().compare_exchange(2, 0, Ordering::Relaxed, Ordering::Relaxed) {
             return Err(this);
         }
 
-        let request_ptr = this.as_ptr();
-
+        let request_ptr = this.0.get();
         core::mem::forget(this);
 
         // SAFETY: By type invariant, `self.0` is a valid `struct request`. By
@@ -202,7 +196,14 @@ impl<T: Operations> Request<T> {
 
 /// A wrapper around data stored in the private area of the C `struct request`.
 pub(crate) struct RequestDataWrapper<T: Operations> {
+    /// The Rust request refcount has the following states:
+    ///
+    /// - 0: The request is owned by C block layer.
+    /// - 1: The request is owned by Rust abstractions but there are no ARef references to it.
+    /// - 2+: There are `ARef` references to the request.
     refcount: AtomicU64,
+
+    /// Driver managed request data
     data: T::RequestData,
 }
 
@@ -350,7 +351,7 @@ fn atomic_relaxed_op_unless(target: &AtomicU64, op: impl Fn(u64) -> u64, pred: u
 // decrement is executed.
 unsafe impl<T: Operations> AlwaysRefCounted for Request<T> {
     fn inc_ref(&self) {
-        let refcount = &self.wrapper_ref().refcount;
+        let refcount = &self.wrapper_ref().refcount();
 
         #[cfg_attr(not(CONFIG_DEBUG_MISC), allow(unused_variables))]
         let updated = atomic_relaxed_op_unless(refcount, |x| x + 1, 0);
@@ -364,7 +365,7 @@ unsafe impl<T: Operations> AlwaysRefCounted for Request<T> {
 
     unsafe fn dec_ref(obj: core::ptr::NonNull<Self>) {
         let wrapper_ptr = unsafe { Self::wrapper_ptr(obj.as_ptr()).as_ptr() };
-        let refcount = unsafe { &*addr_of_mut!((*wrapper_ptr).refcount) };
+        let refcount = unsafe { &* RequestDataWrapper::refcount_ptr(wrapper_ptr) };
 
         #[cfg_attr(not(CONFIG_DEBUG_MISC), allow(unused_variables))]
         let new_refcount = atomic_relaxed_op_return(refcount, |x| x - 1);

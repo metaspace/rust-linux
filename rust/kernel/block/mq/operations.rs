@@ -127,7 +127,8 @@ impl<T: Operations> OperationsVTable<T> {
         // this function.
         let request = unsafe { &*(*bd).rq.cast::<Request<T>>() };
 
-        request.wrapper_ref().refcount().store(1, Ordering::Relaxed);
+        // One refcount for the ARef, one for being in flight
+        request.wrapper_ref().refcount().store(2, Ordering::Relaxed);
 
         let rq =
         // SAFETY: We own a refcount that we took above. We pass that to `ARef`.
