@@ -7,32 +7,37 @@
 //!
 //! # Example
 //!
+//! In the following example the generic parameter `G` is present for
+//! demonstration purposes only.
+//!
 //! ```rust
 //! use kernel::{
-//!     sync::Arc, hrtimer::{RawTimer, Timer, TimerCallback},
+//!     sync::Arc, hrtimer::{ Timer, TimerCallback, TimerPointer },
 //!     impl_has_timer, prelude::*, stack_pin_init
 //! };
-//! use core::sync::atomic::AtomicBool;
-//! use core::sync::atomic::Ordering;
+//! use core::sync::atomic::{ AtomicBool, Ordering };
+//! use core::marker::PhantomData;
 //!
 //! #[pin_data]
-//! struct IntrusiveTimer {
+//! struct IntrusiveTimer<U: Send + Sync, T: AsRef<U> + Send + Sync> {
 //!     #[pin]
 //!     timer: Timer<Self>,
 //!     flag: AtomicBool,
+//!     _p: PhantomData<(U,T)>,
 //! }
 //!
-//! impl IntrusiveTimer {
+//! impl<U: Send + Sync, T: AsRef<U> + Send + Sync> IntrusiveTimer<U, T> {
 //!     fn new() -> impl PinInit<Self> {
 //!         pin_init!(Self {
 //!             timer <- Timer::new(),
 //!             flag: AtomicBool::new(false),
+//!             _p: PhantomData
 //!         })
 //!     }
 //! }
 //!
-//! impl TimerCallback for IntrusiveTimer {
-//!     type Receiver = Arc<IntrusiveTimer>;
+//! impl<U: Send + Sync, T: AsRef<U> + Send + Sync> TimerCallback for IntrusiveTimer<U, T> {
+//!     type Receiver = Arc<IntrusiveTimer<U,T>>;
 //!
 //!     fn run(this: Self::Receiver) {
 //!         pr_info!("Timer called\n");
@@ -41,14 +46,9 @@
 //! }
 //!
 //! impl_has_timer! {
-//!     impl HasTimer<Self> for IntrusiveTimer { self.timer }
+//!     impl { U: Send + Sync, T: AsRef<U> + Send + Sync} HasTimer<Self> for IntrusiveTimer<U,T> { self.timer }
 //! }
 //!
-//! let has_timer = Arc::pin_init(IntrusiveTimer::new())?;
-//! has_timer.clone().schedule(200_000_000);
-//! while !has_timer.flag.load(Ordering::Relaxed) { core::hint::spin_loop() }
-//!
-//! pr_info!("Flag raised\n");
 //!
 //! # Ok::<(), kernel::error::Error>(())
 //! ```
