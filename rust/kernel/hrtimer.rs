@@ -7,8 +7,55 @@
 //!
 //! # Example
 //!
-//! In the following example the generic parameter `G` is present for
-//! demonstration purposes only.
+//! ```rust
+//! use kernel::{
+//!     sync::Arc, hrtimer::{Timer, TimerCallback, TimerPointer},
+//!     impl_has_timer, prelude::*, stack_pin_init
+//! };
+//! use core::sync::atomic::AtomicBool;
+//! use core::sync::atomic::Ordering;
+//!
+//! #[pin_data]
+//! struct IntrusiveTimer {
+//!     #[pin]
+//!     timer: Timer<Self>,
+//!     flag: AtomicBool,
+//! }
+//!
+//! impl IntrusiveTimer {
+//!     fn new() -> impl PinInit<Self> {
+//!         pin_init!(Self {
+//!             timer <- Timer::new(),
+//!             flag: AtomicBool::new(false),
+//!         })
+//!     }
+//! }
+//!
+//! impl TimerCallback for IntrusiveTimer {
+//!     type Receiver = Arc<IntrusiveTimer>;
+//!
+//!     fn run(this: Self::Receiver) {
+//!         pr_info!("Timer called\n");
+//!         this.flag.store(true, Ordering::Relaxed);
+//!     }
+//! }
+//!
+//! impl_has_timer! {
+//!     impl HasTimer<Self> for IntrusiveTimer { self.timer }
+//! }
+//!
+//! let has_timer = Arc::pin_init(IntrusiveTimer::new())?;
+//! has_timer.clone().schedule(200_000_000);
+//! while !has_timer.flag.load(Ordering::Relaxed) { core::hint::spin_loop() }
+//!
+//! pr_info!("Flag raised\n");
+//!
+//! # Ok::<(), kernel::error::Error>(())
+//! ```
+//!
+//! Another example demonstrating use of `impl_has_timer!` with more complex
+//! generics. Notice that the impl generic block uses `{}` delimiters in the
+//! macro invication.
 //!
 //! ```rust
 //! use kernel::{
@@ -46,7 +93,7 @@
 //! }
 //!
 //! impl_has_timer! {
-//!     impl { U: Send + Sync, T: AsRef<U> + Send + Sync} HasTimer<Self> for IntrusiveTimer<U,T> { self.timer }
+//!     impl { U: Send + Sync, T: AsRef<U> + Send + Sync } HasTimer<Self> for IntrusiveTimer<U,T> { self.timer }
 //! }
 //!
 //!
@@ -59,7 +106,7 @@ use core::{marker::PhantomData, pin::Pin};
 
 use crate::{init::PinInit, prelude::*, sync::Arc, types::Opaque};
 
-/// A timer backed by a C `struct hrtimer`
+/// A timer backed by a C `struct hrtimer`.
 ///
 /// # Invariants
 ///
@@ -82,7 +129,7 @@ unsafe impl<T> Sync for Timer<T> {}
 impl<T: TimerCallback> Timer<T> {
     /// Return an initializer for a new timer instance.
     pub fn new() -> impl PinInit<Self> {
-        crate::pin_init!( Self {
+        pin_init!( Self {
             timer <- Opaque::ffi_init(move |place: *mut bindings::hrtimer| {
                 // SAFETY: By design of `pin_init!`, `place` is a pointer live
                 // allocation. hrtimer_init will initialize `place` and does not
@@ -124,6 +171,9 @@ impl<T> PinnedDrop for Timer<T> {
 /// facilitates queueing the timer through the pointer that implements the
 /// trait.
 ///
+/// TODO
+/// Implemented by pointer types that can be the target of a C timer callback.
+///
 /// Typical implementers would be [`Box<T>`], [`Arc<T>`], [`ARef<T>`] where `T`
 /// has a field of type `Timer`.
 ///
@@ -133,9 +183,16 @@ impl<T> PinnedDrop for Timer<T> {
 /// [`Box<T>`]: Box
 /// [`Arc<T>`]: Arc
 /// [`ARef<T>`]: crate::types::ARef
-pub trait RawTimer: Sync {
+pub trait TimerPointer: Sync {
     /// Schedule the timer after `expires` time units
     fn schedule(self, expires: u64);
+
+    /// Callback to be called from C.
+    ///
+    /// # Safety
+    ///
+    /// Only to be called by C code in `hrtimer`subsystem.
+    unsafe extern "C" fn run(ptr: *mut bindings::hrtimer) -> bindings::hrtimer_restart;
 }
 
 /// Implemented by structs that contain timer nodes.
@@ -181,29 +238,20 @@ pub unsafe trait HasTimer<T> {
     }
 }
 
-/// Implemented by pointer types that can be the target of a C timer callback.
-pub trait RawTimerCallback: RawTimer {
-    /// Callback to be called from C.
-    ///
-    /// # Safety
-    ///
-    /// Only to be called by C code in `hrtimer`subsystem.
-    unsafe extern "C" fn run(ptr: *mut bindings::hrtimer) -> bindings::hrtimer_restart;
-}
-
 /// Implemented by pointers to structs that can the target of a timer callback
 pub trait TimerCallback {
     /// Type of `this` argument for `run()`.
-    type Receiver: RawTimerCallback;
+    type Receiver: TimerPointer;
 
     /// Called by the timer logic when the timer fires
     fn run(this: Self::Receiver);
 }
 
-impl<T> RawTimer for Arc<T>
+impl<T> TimerPointer for Arc<T>
 where
     T: Send + Sync,
     T: HasTimer<T>,
+    T: TimerCallback<Receiver = Self>,
 {
     fn schedule(self, expires: u64) {
         let self_ptr = Arc::into_raw(self);
@@ -228,14 +276,7 @@ where
             );
         }
     }
-}
 
-impl<T> kernel::hrtimer::RawTimerCallback for Arc<T>
-where
-    T: Send + Sync,
-    T: HasTimer<T>,
-    T: TimerCallback<Receiver = Self>,
-{
     unsafe extern "C" fn run(ptr: *mut bindings::hrtimer) -> bindings::hrtimer_restart {
         // `Timer` is `repr(transparent)`
         let timer_ptr = ptr.cast::<kernel::hrtimer::Timer<T>>();
@@ -260,24 +301,25 @@ where
 /// [`module`]: crate::hrtimer
 #[macro_export]
 macro_rules! impl_has_timer {
-    ($(impl$(<$($implarg:ident),*>)?
-       HasTimer<$timer_type:ty $(, $id:tt)?>
-       for $self:ident $(<$($selfarg:ident),*>)?
-       { self.$field:ident }
-    )*) => {$(
+    (
+        impl$({$($generics:tt)*})?
+            HasTimer<$timer_type:ty>
+            for $self:ty
+        { self.$field:ident }
+        $($rest:tt)*
+    ) => {
         // SAFETY: This implementation of `raw_get_timer` only compiles if the
         // field has the right type.
-        unsafe impl$(<$($implarg),*>)? $crate::hrtimer::HasTimer<$timer_type> for $self $(<$($selfarg),*>)? {
+        unsafe impl$(<$($generics)*>)? $crate::hrtimer::HasTimer<$timer_type> for $self {
             const OFFSET: usize = ::core::mem::offset_of!(Self, $field) as usize;
 
             #[inline]
-            unsafe fn raw_get_timer(ptr: *const Self) -> *const $crate::hrtimer::Timer<$timer_type $(, $id)?> {
+            unsafe fn raw_get_timer(ptr: *const Self) -> *const $crate::hrtimer::Timer<$timer_type> {
                 // SAFETY: The caller promises that the pointer is not dangling.
                 unsafe {
                     ::core::ptr::addr_of!((*ptr).$field)
                 }
             }
-
         }
-    )*};
+    }
 }
