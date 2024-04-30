@@ -153,6 +153,18 @@ impl<T: TimerCallback> Timer<T> {
             _t: PhantomData,
         })
     }
+
+    /// Get a pointer to the contained `bindings::hrtimer`.
+    ///
+    /// # Safety
+    ///
+    /// `ptr` must point to a live allocation of at least the size of `Self`.
+    fn raw_get(ptr: *const Self) -> *mut bindings::hrtimer {
+        // SAFETY: The field projection to `timer` does not go out of bounds,
+        // because the caller of this function promises that `ptr` points to an
+        // allocation of at least the size of `Self`.
+        unsafe { Opaque::raw_get(core::ptr::addr_of!((*ptr).timer)) }
+    }
 }
 
 #[pinned_drop]
@@ -191,7 +203,7 @@ pub trait TimerPointer: Sync {
     ///
     /// # Safety
     ///
-    /// Only to be called by C code in `hrtimer`subsystem.
+    /// Only to be called by C code in `hrtimer` subsystem.
     unsafe extern "C" fn run(ptr: *mut bindings::hrtimer) -> bindings::hrtimer_restart;
 }
 
@@ -238,12 +250,12 @@ pub unsafe trait HasTimer<T> {
     }
 }
 
-/// Implemented by pointers to structs that can the target of a timer callback
+/// Implemented by structs that can the target of a timer callback
 pub trait TimerCallback {
     /// Type of `this` argument for `run()`.
     type Receiver: TimerPointer;
 
-    /// Called by the timer logic when the timer fires
+    /// Called by the timer logic when the timer fires.
     fn run(this: Self::Receiver);
 }
 
@@ -256,25 +268,25 @@ where
     fn schedule(self, expires: u64) {
         let self_ptr = Arc::into_raw(self);
 
-        // SAFETY: `self_ptr` is a valid pointer to a `T`
+        // SAFETY: `self_ptr` is a valid pointer to a `T`.
         let timer_ptr = unsafe { T::raw_get_timer(self_ptr) };
 
-        // `Timer` is `repr(transparent)`
-        let c_timer_ptr = timer_ptr.cast::<bindings::hrtimer>();
+        // SAFETY: timer_ptr points to an allocation of at least `Timer` size.
+        let c_timer_ptr = unsafe { Timer::raw_get(timer_ptr) };
 
         // Schedule the timer - if it is already scheduled it is removed and
-        // inserted
+        // inserted.
 
         // SAFETY: c_timer_ptr points to a valid hrtimer instance that was
-        // initialized by `hrtimer_init`
+        // initialized by `hrtimer_init`.
         unsafe {
             bindings::hrtimer_start_range_ns(
                 c_timer_ptr.cast_mut(),
                 expires as i64,
                 0,
                 bindings::hrtimer_mode_HRTIMER_MODE_REL,
-            );
-        }
+            )
+        };
     }
 
     unsafe extern "C" fn run(ptr: *mut bindings::hrtimer) -> bindings::hrtimer_restart {
@@ -282,10 +294,10 @@ where
         let timer_ptr = ptr.cast::<kernel::hrtimer::Timer<T>>();
 
         // SAFETY: By C API contract `ptr` is the pointer we passed when
-        // enqueing the timer, so it is a `Timer<T>` embedded in a `T`
+        // enqueing the timer, so it is a `Timer<T>` embedded in a `T`.
         let data_ptr = unsafe { T::timer_container_of(timer_ptr) };
 
-        // SAFETY: This `Arc` comes from a call to `Arc::into_raw()`
+        // SAFETY: This `Arc` comes from a call to `Arc::into_raw()`.
         let receiver = unsafe { Arc::from_raw(data_ptr) };
 
         T::run(receiver);
