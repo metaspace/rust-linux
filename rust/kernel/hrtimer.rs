@@ -5,6 +5,8 @@
 //! Allows scheduling timer callbacks without doing allocations at the time of
 //! scheduling. For now, only one timer per type is allowed.
 //!
+//! Only heap allocated timers are supported for now.
+//!
 //! # Example
 //!
 //! ```rust
@@ -159,7 +161,7 @@ impl<T: TimerCallback> Timer<T> {
     /// # Safety
     ///
     /// `ptr` must point to a live allocation of at least the size of `Self`.
-    fn raw_get(ptr: *const Self) -> *mut bindings::hrtimer {
+    unsafe fn raw_get(ptr: *const Self) -> *mut bindings::hrtimer {
         // SAFETY: The field projection to `timer` does not go out of bounds,
         // because the caller of this function promises that `ptr` points to an
         // allocation of at least the size of `Self`.
@@ -277,11 +279,25 @@ where
         // Schedule the timer - if it is already scheduled it is removed and
         // inserted.
 
+        // Remove the timer if already queued.
+        let removed = unsafe { bindings::hrtimer_cancel(c_timer_ptr) };
+
+        // `hrtimer_cancel` returns 1 if the timer was removed. Otherwise the
+        // timer is not queued or the handler for the timer is currently
+        // running. Either way, we only care if we managed to remove the timer.
+        if removed == 1 {
+            // Drop the old `Arc` that was enqueued earlier.
+            drop(
+                // SAFETY: The `Arc` was leaked when the timer was enqueued.
+                unsafe { arc_receiver::<T>(c_timer_ptr) },
+            );
+        }
+
         // SAFETY: c_timer_ptr points to a valid hrtimer instance that was
         // initialized by `hrtimer_init`.
         unsafe {
             bindings::hrtimer_start_range_ns(
-                c_timer_ptr.cast_mut(),
+                c_timer_ptr,
                 expires as i64,
                 0,
                 bindings::hrtimer_mode_HRTIMER_MODE_REL,
@@ -290,20 +306,34 @@ where
     }
 
     unsafe extern "C" fn run(ptr: *mut bindings::hrtimer) -> bindings::hrtimer_restart {
-        // `Timer` is `repr(transparent)`
-        let timer_ptr = ptr.cast::<kernel::hrtimer::Timer<T>>();
-
-        // SAFETY: By C API contract `ptr` is the pointer we passed when
-        // enqueing the timer, so it is a `Timer<T>` embedded in a `T`.
-        let data_ptr = unsafe { T::timer_container_of(timer_ptr) };
-
-        // SAFETY: This `Arc` comes from a call to `Arc::into_raw()`.
-        let receiver = unsafe { Arc::from_raw(data_ptr) };
-
+        // SAFETY: We leaked the `Arc` when we enqueued the timer.
+        let receiver = unsafe { arc_receiver(ptr)};
         T::run(receiver);
 
         bindings::hrtimer_restart_HRTIMER_NORESTART
     }
+}
+
+/// Get the `Arc` that was used to enqueue a timer.
+///
+/// # Safety
+///
+/// The caller must own a refcount on the `Arc` associated with `ptr` that was
+/// previously leaked.
+unsafe fn arc_receiver<T>(ptr: *mut bindings::hrtimer) -> Arc<T>
+where
+    T: HasTimer<T>,
+    T: TimerCallback<Receiver = Arc<T>>,
+{
+    // `Timer` is `repr(transparent)`
+    let timer_ptr = ptr.cast::<kernel::hrtimer::Timer<T>>();
+
+    // SAFETY: By C API contract `ptr` is the pointer we passed when
+    // enqueing the timer, so it is a `Timer<T>` embedded in a `T`.
+    let data_ptr = unsafe { T::timer_container_of(timer_ptr) };
+
+    // SAFETY: This `Arc` comes from a call to `Arc::into_raw()`.
+    unsafe { Arc::from_raw(data_ptr) }
 }
 
 /// Use to implement the [`HasTimer<T>`] trait.
