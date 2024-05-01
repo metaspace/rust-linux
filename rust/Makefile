@@ -24,8 +24,10 @@ RUST_HELPERS := \
 	workqueue \
 	xarray
 
-export RUST_HELPERS
-obj-y += helpers/
+obj-y += helpers.o
+# Missing prototypes are expected in the helpers since these are exported
+# for Rust only, thus there is no header nor prototypes.
+CFLAGS_REMOVE_helpers.o = -Wmissing-prototypes -Wmissing-declarations
 
 always-$(CONFIG_RUST) += libmacros.so
 no-clean-files += libmacros.so
@@ -390,6 +392,9 @@ $(obj)/bindings/bindings_helpers_generated.rs: $(obj)/helpers/helpers_combined.c
 targets += helpers/helpers_combined.c
 $(obj)/helpers/helpers_combined.c: $(patsubst %,$(src)/helpers/%.c, $(RUST_HELPERS)) FORCE
 	$(call if_changed,cat)
+
+$(obj)/helpers.o: $(src)/helpers/helpers_combined.c FORCE
+	$(call if_changed_dep,cc_o_c)
 
 quiet_cmd_exports = EXPORTS $@
       cmd_exports = \
