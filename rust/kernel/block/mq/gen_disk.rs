@@ -84,6 +84,7 @@ impl<T: Operations> GenDisk<T> {
         })
     }
 
+    // TODO: What about using this after disk was added
     /// Set the name of the device.
     pub fn set_name(&mut self, args: fmt::Arguments<'_>) -> Result {
         let mut raw_writer = RawWriter::from_array(
