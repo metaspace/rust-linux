@@ -24,7 +24,7 @@ __rust_helper void rust_helper_spin_unlock(spinlock_t *lock)
 	spin_unlock(lock);
 }
 
-unsigned long rust_helper_spin_lock_irqsave(spinlock_t *lock)
+__rust_helper unsigned long rust_helper_spin_lock_irqsave(spinlock_t *lock)
 {
 	unsigned long flags;
 
@@ -33,7 +33,7 @@ unsigned long rust_helper_spin_lock_irqsave(spinlock_t *lock)
 	return flags;
 }
 
-void rust_helper_spin_unlock_irqrestore(spinlock_t *lock, unsigned long flags)
+__rust_helper void rust_helper_spin_unlock_irqrestore(spinlock_t *lock, unsigned long flags)
 {
 	spin_unlock_irqrestore(lock, flags);
 }
