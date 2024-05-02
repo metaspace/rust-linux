@@ -2,7 +2,7 @@
 
 #include <linux/export.h>
 #include <linux/refcount.h>
-#include "helpers.h"
+#include <helpers.h>
 
 __rust_helper refcount_t rust_helper_REFCOUNT_INIT(int n)
 {

@@ -2,7 +2,7 @@
 
 #include <linux/export.h>
 #include <linux/mutex.h>
-#include "helpers.h"
+#include <helpers.h>
 
 __rust_helper void rust_helper_mutex_lock(struct mutex *lock)
 {

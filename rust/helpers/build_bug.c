@@ -2,7 +2,7 @@
 
 #include <linux/export.h>
 #include <linux/errname.h>
-#include "helpers.h"
+#include <helpers.h>
 
 __rust_helper const char *rust_helper_errname(int err)
 {

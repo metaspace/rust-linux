@@ -2,7 +2,7 @@
 
 #include <linux/export.h>
 #include <linux/workqueue.h>
-#include "helpers.h"
+#include <helpers.h>
 
 __rust_helper void rust_helper_init_work_with_key(struct work_struct *work, work_func_t func,
 				    bool onstack, const char *name,

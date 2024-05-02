@@ -2,7 +2,7 @@
 
 #include <linux/export.h>
 #include <linux/sched/signal.h>
-#include "helpers.h"
+#include <helpers.h>
 
 __rust_helper int rust_helper_signal_pending(struct task_struct *t)
 {

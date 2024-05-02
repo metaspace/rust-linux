@@ -27,12 +27,9 @@ RUST_HELPERS := \
 ifdef CONFIG_RUST_LTO_HELPERS
 always-$(CONFIG_RUST) += helpers.bc
 else
-obj-$(CONFIG_RUST) += helpers.o
+obj-$(CONFIG_RUST) += helpers_combined.o
 always-$(CONFIG_RUST) += exports_helpers_generated.h
 endif
-# Missing prototypes are expected in the helpers since these are exported
-# for Rust only, thus there is no header nor prototypes.
-CFLAGS_REMOVE_helpers.o = -Wmissing-prototypes -Wmissing-declarations
 
 always-$(CONFIG_RUST) += libmacros.so
 no-clean-files += libmacros.so
@@ -380,15 +377,15 @@ $(obj)/uapi/uapi_generated.rs: $(src)/uapi/uapi_helper.h \
     $(src)/bindgen_parameters FORCE
 	$(call if_changed_dep,bindgen)
 
-# See `ccflags-remove-y` in helpers/Makefile . In addition, Clang on C does not
-# warn with `-Wmissing-declarations` (unlike GCC), so it is not strictly needed
-# here given it is `libclang`; but for consistency, future Clang changes and/or
-# a potential future GCC backend for `bindgen`, we disable it too.
+# See `CFLAGS_REMOVE_helpers` below. In addition, Clang on C does not warn with
+# `-Wmissing-declarations` (unlike GCC), so it is not strictly needed here given
+# it is `libclang`; but for consistency, future Clang changes and/or a potential
+# future GCC backend for `bindgen`, we disable it too.
 $(obj)/bindings/bindings_helpers_generated.rs: private bindgen_target_flags = \
     --blocklist-type '.*' --allowlist-var '' \
     --allowlist-function 'rust_helper_.*'
 $(obj)/bindings/bindings_helpers_generated.rs: private bindgen_target_cflags = \
-    -I$(objtree)/$(obj) -Wno-missing-prototypes -Wno-missing-declarations
+    -I$(objtree)/$(obj) $(CFLAGS_helpers_combined.o) -Wno-missing-prototypes -Wno-missing-declarations
 $(obj)/bindings/bindings_helpers_generated.rs: private bindgen_target_extra = ; \
     sed -Ei 's/pub fn rust_helper_([a-zA-Z0-9_]*)/#[link_name="rust_helper_\1"]\n    pub fn \1/g' $@
 $(obj)/bindings/bindings_helpers_generated.rs: $(obj)/helpers/helpers_combined.c FORCE
@@ -398,15 +395,18 @@ targets += helpers/helpers_combined.c
 $(obj)/helpers/helpers_combined.c: $(patsubst %,$(src)/helpers/%.c, $(RUST_HELPERS)) FORCE
 	$(call if_changed,cat)
 
-$(obj)/helpers.o: $(src)/helpers/helpers_combined.c FORCE
-	$(call if_changed_dep,cc_o_c)
+# Missing prototypes are expected in the helpers since these are exported
+# for Rust only, thus there is no header nor prototypes.
+CFLAGS_REMOVE_helpers_combined.o = -Wmissing-prototypes -Wmissing-declarations
+
+CFLAGS_helpers_combined.o = -I$(srctree)/$(src)/helpers
 
 # When compiling helpers, filter `-fno-delete-null-pointer-checks` since LLVM
 # prevents inlining such functions to be inlined into functions compiled
 # without the option (e.g. Rust functions).
 quiet_cmd_rust_helper = HELPER  $@
       cmd_rust_helper = \
-	$(CC) $(filter-out -fno-delete-null-pointer-checks $(CFLAGS_REMOVE_helpers.o), $(c_flags)) -S $< -emit-llvm -o $(patsubst %.bc,%.ll,$@); \
+	$(CC) $(filter-out -fno-delete-null-pointer-checks $(CFLAGS_REMOVE_helpers_combined.o), $(c_flags)) $(CFLAGS_helpers_combined.o) -S $< -emit-llvm -o $(patsubst %.bc,%.ll,$@); \
 	sed -i 's/^define dso_local/define linkonce_odr dso_local/g' $(patsubst %.bc,%.ll,$@); \
 	$(LLVM_AS) $(patsubst %.bc,%.ll,$@) -o $@
 
@@ -430,7 +430,7 @@ $(obj)/exports_bindings_generated.h: $(obj)/bindings.o FORCE
 $(obj)/exports_kernel_generated.h: $(obj)/kernel.o FORCE
 	$(call if_changed,exports)
 
-$(obj)/exports_helpers_generated.h: $(obj)/helpers.o FORCE
+$(obj)/exports_helpers_generated.h: $(obj)/helpers_combined.o FORCE
 	$(call if_changed,exports)
 
 quiet_cmd_rustc_procmacro = $(RUSTC_OR_CLIPPY_QUIET) P $@

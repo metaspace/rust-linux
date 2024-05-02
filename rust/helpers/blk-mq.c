@@ -1,6 +1,7 @@
 #include <linux/bio.h>
 #include <linux/blk-mq.h>
 #include <linux/blkdev.h>
+#include <helpers.h>
 
 __rust_helper struct bio_vec rust_helper_req_bvec(struct request *rq)
 {

@@ -2,7 +2,7 @@
 
 #include <linux/export.h>
 #include <linux/spinlock.h>
-#include "helpers.h"
+#include <helpers.h>
 
 __rust_helper void rust_helper___spin_lock_init(spinlock_t *lock, const char *name,
 				  struct lock_class_key *key)

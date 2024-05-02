@@ -2,7 +2,7 @@
 
 #include <linux/export.h>
 #include <linux/sched/task.h>
-#include "helpers.h"
+#include <helpers.h>
 
 __rust_helper struct task_struct *rust_helper_get_current(void)
 {
