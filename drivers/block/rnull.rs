@@ -92,8 +92,10 @@ impl TryFrom<u8> for IRQMode {
     }
 }
 
+#[pin_data(PinnedDrop)]
 struct NullBlkModule {
-    _disk: Pin<Box<Mutex<GenDisk<NullBlkDevice, gen_disk::Added>>>>,
+    #[pin]
+    _disk: Mutex<GenDisk<NullBlkDevice, gen_disk::Added>>,
 }
 
 fn add_disk(tagset: Arc<TagSet<NullBlkDevice>>) -> Result<GenDisk<NullBlkDevice, gen_disk::Added>> {
@@ -125,18 +127,20 @@ fn add_disk(tagset: Arc<TagSet<NullBlkDevice>>) -> Result<GenDisk<NullBlkDevice,
     disk.add()
 }
 
-impl kernel::Module for NullBlkModule {
-    fn init(_module: &'static ThisModule) -> Result<Self> {
+impl kernel::InPlaceModule for NullBlkModule {
+    fn init(_module: &'static ThisModule) -> impl PinInit<Self, Error> {
         pr_info!("Rust null_blk loaded\n");
-        let tagset = Arc::pin_init(TagSet::try_new(1, (), 256, 1))?;
-        let disk = Box::pin_init(new_mutex!(add_disk(tagset)?, "nullb:disk"))?;
+        let tagset = Arc::pin_init(TagSet::try_new(1, (), 256, 1));
 
-        Ok(Self { _disk: disk })
+        try_pin_init!(Self {
+            _disk <- new_mutex!(add_disk(tagset?)?, "nullb:disk")
+        })
     }
 }
 
-impl Drop for NullBlkModule {
-    fn drop(&mut self) {
+#[pinned_drop]
+impl PinnedDrop for NullBlkModule {
+    fn drop(self: Pin<&mut Self>) {
         pr_info!("Dropping rnullb\n");
     }
 }
