@@ -91,6 +91,7 @@ impl TryFrom<u8> for IRQMode {
     }
 }
 
+#[pin_data(PinnedDrop)]
 struct NullBlkModule {
     _disk: Pin<KBox<Mutex<GenDisk<NullBlkDevice>>>>,
 }
@@ -127,6 +128,13 @@ impl kernel::Module for NullBlkModule {
         let disk = KBox::pin_init(new_mutex!(disk, "nullb:disk"), flags::GFP_KERNEL)?;
 
         Ok(Self { _disk: disk })
+    }
+}
+
+#[pinned_drop]
+impl PinnedDrop for NullBlkModule {
+    fn drop(self: Pin<&mut Self>) {
+        pr_info!("Dropping rnullb\n");
     }
 }
 
