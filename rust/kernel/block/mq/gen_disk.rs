@@ -6,7 +6,10 @@
 //! C header: [`include/linux/blk_mq.h`](srctree/include/linux/blk_mq.h)
 
 use crate::block::mq::{raw_writer::RawWriter, Operations, TagSet};
-use crate::{bindings, error::from_err_ptr, error::Result, sync::Arc};
+use crate::{
+    bindings, error::from_err_ptr, error::Result, sync::Arc, types::ForeignOwnable,
+    types::ScopeGuard,
+};
 use core::fmt::{self, Write};
 use core::marker::PhantomData;
 
@@ -15,6 +18,7 @@ use core::marker::PhantomData;
 /// # Invariants
 ///
 ///  - `gendisk` must always point to an initialized and valid `struct gendisk`.
+///  - `self.gendisk.queue.queuedata` is initialized by a call to `ForeignOwnable::into_foreign`.
 pub struct GenDisk<T: Operations, S: GenDiskState> {
     _tagset: Arc<TagSet<T>>,
     gendisk: *mut bindings::gendisk,
@@ -144,17 +148,37 @@ impl<T: Operations, S: GenDiskState> GenDisk<T, S> {
 
 impl<T: Operations, S: GenDiskState> Drop for GenDisk<T, S> {
     fn drop(&mut self) {
+        // SAFETY: By type invariant of `Self`, `self.gendisk` points to a valid
+        // and initialized instance of `struct gendisk`, and, `queuedata` was
+        // initialized with the result of a call to
+        // `ForeignOwnable::into_foreign`.
+        let queue_data = unsafe { (*(*self.gendisk).queue).queuedata };
+
         // TODO: This will `WARN` if the disk was not added. Since we cannot
         // specialize drop, we have to call it, or track state with a flag.
 
         // SAFETY: By type invariant, `self.gendisk` points to a valid and
         // initialized instance of `struct gendisk`
         unsafe { bindings::del_gendisk(self.gendisk) };
+
+        // SAFETY: `queue.queuedata` was created by `GenDisk::try_new()` with a
+        // call to `ForeignOwnable::into_pointer()` to create `queuedata`.
+        // `ForeignOwnable::from_foreign()` is only called here.
+        let _queue_data = unsafe { T::QueueData::from_foreign(queue_data) };
     }
 }
 
 /// Try to create a new `GenDisk`.
-pub fn try_new<T: Operations>(tagset: Arc<TagSet<T>>) -> Result<GenDisk<T, Initialized>> {
+pub fn try_new<T: Operations>(
+    tagset: Arc<TagSet<T>>,
+    queue_data: T::QueueData,
+) -> Result<GenDisk<T, Initialized>> {
+    let data = queue_data.into_foreign();
+    let recover_data = ScopeGuard::new(|| {
+        // SAFETY: T::QueueData was created by the call to `into_foreign()` above
+        unsafe { T::QueueData::from_foreign(data) };
+    });
+
     let lock_class_key = crate::sync::LockClassKey::new();
 
     // SAFETY: `tagset.raw_tag_set()` points to a valid and initialized tag set
@@ -162,7 +186,7 @@ pub fn try_new<T: Operations>(tagset: Arc<TagSet<T>>) -> Result<GenDisk<T, Initi
         bindings::__blk_mq_alloc_disk(
             tagset.raw_tag_set(),
             core::ptr::null_mut(), // TODO: We can pass queue limits right here
-            core::ptr::null_mut(),
+            data.cast_mut(),
             lock_class_key.as_ptr(),
         )
     })?;
@@ -193,6 +217,8 @@ pub fn try_new<T: Operations>(tagset: Arc<TagSet<T>>) -> Result<GenDisk<T, Initi
 
     // SAFETY: gendisk is a valid pointer as we initialized it above
     unsafe { (*gendisk).fops = &TABLE };
+
+    recover_data.dismiss();
 
     // INVARIANT: `gendisk` was initialized above.
     // INVARIANT: `gendisk.queue.queue_data` is set to `data` in the call to
