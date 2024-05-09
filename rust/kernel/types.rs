@@ -156,8 +156,10 @@ impl ForeignOwnable for () {
 }
 
 impl<T: ForeignOwnable + Deref> ForeignOwnable for Pin<T> {
+    const FOREIGN_ALIGN: usize = core::mem::align_of::<T>();
 
     type Borrowed<'a> = T::Borrowed<'a>;
+    type BorrowedMut<'a> = T::BorrowedMut<'a>;
 
     fn into_foreign(self) -> *const core::ffi::c_void {
         // SAFETY: We continue to treat the pointer as pinned by returning just a pointer to it to
@@ -170,6 +172,12 @@ impl<T: ForeignOwnable + Deref> ForeignOwnable for Pin<T> {
         // SAFETY: The safety requirements for this function are the same as the ones for
         // `T::borrow`.
         unsafe { T::borrow(ptr) }
+    }
+
+    unsafe fn borrow_mut<'a>(ptr: *const core::ffi::c_void) -> Self::BorrowedMut<'a> {
+        // SAFETY: The safety requirements for this function are the same as the ones for
+        // `T::borrow_mut`.
+        unsafe { T::borrow_mut(ptr) }
     }
 
     unsafe fn from_foreign(p: *const core::ffi::c_void) -> Self {
