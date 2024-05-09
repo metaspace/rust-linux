@@ -7,7 +7,7 @@
 use crate::{
     bindings,
     block::mq::Operations,
-    error::Result,
+    error::{Error, Result},
     types::{ARef, AlwaysRefCounted, Opaque},
 };
 use core::{
@@ -42,6 +42,12 @@ impl<T: Operations> Request<T> {
         // SAFETY: By the safety requirement of this function, we own a
         // reference count that we can pass to `ARef`.
         unsafe { ARef::from_raw(NonNull::new_unchecked(ptr as *const Self as *mut Self)) }
+    }
+
+    /// Get the command identifier for the request
+    pub fn command(&self) -> u32 {
+        // SAFETY: By C API contract and type invariant, `cmd_flags` is valid for read
+        unsafe { (*self.0.get()).cmd_flags & ((1 << bindings::REQ_OP_BITS) - 1) }
     }
 
     /// Notify the block layer that a request is going to be processed now.
@@ -89,6 +95,68 @@ impl<T: Operations> Request<T> {
         Ok(())
     }
 
+    /// Notify the block layer that the request completed with an error.
+    ///
+    /// This function will return `Err` if `this` is not the only `ARef`
+    /// referencing the request.
+    ///
+    /// Block device drivers must call one of the `end_ok`, `end_err` or `end`
+    /// functions when they have finished processing a request. Failure to do so
+    /// can lead to deadlock.
+    pub fn end_err(this: ARef<Self>, err: Error) -> Result<(), ARef<Self>> {
+        let this = Self::try_set_end(this)?;
+        let request_ptr = this.0.get();
+        core::mem::forget(this);
+
+        // SAFETY: By type invariant, `self.0` is a valid `struct request`. By
+        // existence of `&mut self` we have exclusive access.
+        unsafe { bindings::blk_mq_end_request(request_ptr, err.to_blk_status()) };
+
+        Ok(())
+    }
+
+    /// Notify the block layer that the request completed with the status
+    /// indicated by `status`.
+    ///
+    /// This function will return `Err` if `this` is not the only `ARef`
+    /// referencing the request.
+    ///
+    /// Block device drivers must call one of the `end_ok`, `end_err` or `end`
+    /// functions when they have finished processing a request. Failure to do so
+    /// can lead to deadlock.
+    pub fn end(this: ARef<Self>, status: Result) -> Result<(), ARef<Self>> {
+        if let Err(e) = status {
+            Self::end_err(this, e)
+        } else {
+            Self::end_ok(this)
+        }
+    }
+
+    /// Complete the request by scheduling `Operations::complete` for
+    /// execution.
+    ///
+    /// The function may be scheduled locally, via SoftIRQ or remotely via IPMI.
+    /// See `blk_mq_complete_request_remote` in [`blk-mq.c`] for details.
+    ///
+    /// [`blk-mq.c`]: srctree/block/blk-mq.c
+    pub fn complete(this: ARef<Self>) {
+        let ptr = this.into_raw().cast::<bindings::request>();
+        // SAFETY: By type invariant, `self.0` is a valid `struct request`
+        if !unsafe { bindings::blk_mq_complete_request_remote(ptr) } {
+            let this =
+                // SAFETY: We released a refcount above that we can reclaim here.
+                unsafe { Request::aref_from_raw(ptr) };
+            T::complete(this);
+        }
+    }
+
+    /// Get the target sector for the request
+    #[inline(always)]
+    pub fn sector(&self) -> usize {
+        // SAFETY: By type invariant of `Self`, `self.0` is valid and live.
+        unsafe { (*self.0.get()).__sector as usize }
+    }
+
     /// Return a pointer to the `RequestDataWrapper` stored in the private area
     /// of the request structure.
     ///
@@ -114,6 +182,11 @@ impl<T: Operations> Request<T> {
         // valid. The existence of `&self` guarantees that the private data is
         // valid as a shared reference.
         unsafe { Self::wrapper_ptr(self as *const Self as *mut Self).as_ref() }
+    }
+
+    /// Return a reference to the per-request data associated with this request.
+    pub fn data_ref(&self) -> &T::RequestData {
+        &self.wrapper_ref().data
     }
 }
 
