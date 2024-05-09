@@ -6,11 +6,15 @@
 //!
 //! - blk-mq interface
 //! - direct completion
+//! - softirq completion
 //!
-//! The driver is not configurable.
+//! The driver is configured at module load time by parameters
+//! `param_capacity_mib` and `param_irq_mode`.
 
 use kernel::{
-    block::mq::{self, gen_disk::{self, GenDisk}, Operations, TagSet},
+    block::{
+        mq::{self, gen_disk::{self, GenDisk}, Operations, TagSet},
+    },
     error::Result,
     new_mutex, pr_info,
     prelude::*,
@@ -18,16 +22,36 @@ use kernel::{
     types::{ARef, ForeignOwnable},
 };
 
+// TODO: Move parameters to their own namespace
 module! {
     type: NullBlkModule,
     name: "rnull_mod",
     author: "Andreas Hindborg",
     license: "GPL v2",
+    params: {
+        // Problems with pin_init when `irq_mode`
+        param_irq_mode: u8 {
+            default: 0,
+            permissions: 0,
+            description: "IRQ Mode (0: None, 1: Soft)",
+        },
+        param_capacity_mib: u64 {
+            default: 4096,
+            permissions: 0,
+            description: "Device capacity in MiB",
+        },
+        param_block_size: u16 {
+            default: 4096,
+            permissions: 0,
+            description: "Block size in bytes",
+        },
+    },
 }
 
 #[derive(Debug)]
 enum IRQMode {
     None,
+    Soft,
 }
 
 impl TryFrom<u8> for IRQMode {
@@ -36,6 +60,7 @@ impl TryFrom<u8> for IRQMode {
     fn try_from(value: u8) -> Result<Self> {
         match value {
             0 => Ok(Self::None),
+            1 => Ok(Self::Soft),
             _ => Err(kernel::error::code::EINVAL),
         }
     }
@@ -46,12 +71,12 @@ struct NullBlkModule {
 }
 
 fn add_disk(tagset: Arc<TagSet<NullBlkDevice>>) -> Result<GenDisk<NullBlkDevice, gen_disk::Added>> {
-    let block_size: u16 = 4096;
+    let block_size = *param_block_size.read();
     if block_size % 512 != 0 || !(512..=4096).contains(&block_size) {
         return Err(kernel::error::code::EINVAL);
     }
 
-    let irq_mode = IRQMode::None;
+    let irq_mode = (*param_irq_mode.read()).try_into()?;
 
     let queue_data = Box::pin_init(pin_init!(
         QueueData {
@@ -64,7 +89,7 @@ fn add_disk(tagset: Arc<TagSet<NullBlkDevice>>) -> Result<GenDisk<NullBlkDevice,
 
     let mut disk = gen_disk::try_new(tagset, queue_data)?;
     disk.set_name(format_args!("rnullb{}", 0))?;
-    disk.set_capacity_sectors(4096 << 11);
+    disk.set_capacity_sectors(*param_capacity_mib.read() << 11);
     disk.set_queue_logical_block_size(block_size.into());
     disk.set_queue_physical_block_size(block_size.into());
     disk.set_rotational(false);
@@ -126,6 +151,7 @@ impl Operations for NullBlkDevice {
             IRQMode::None => mq::Request::end_ok(rq)
                 .map_err(|_e| kernel::error::code::EIO)
                 .expect("Failed to complete request"),
+            IRQMode::Soft => mq::Request::complete(rq),
         }
 
         Ok(())
