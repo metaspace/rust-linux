@@ -6,8 +6,10 @@
 //!
 //! - blk-mq interface
 //! - direct completion
+//! - softirq completion
 //!
-//! The driver is not configurable.
+//! The driver is configured at module load time by parameters
+//! `param_capacity_mib` and `param_irq_mode`.
 
 use kernel::{
     alloc::flags,
@@ -23,11 +25,30 @@ use kernel::{
     types::{ARef, ForeignOwnable},
 };
 
+// TODO: Move parameters to their own namespace
 module! {
     type: NullBlkModule,
     name: "rnull_mod",
     author: "Andreas Hindborg",
     license: "GPL v2",
+    params: {
+        // Problems with pin_init when `irq_mode`
+        param_irq_mode: u8 {
+            default: 0,
+            permissions: 0,
+            description: "IRQ Mode (0: None, 1: Soft)",
+        },
+        param_capacity_mib: u64 {
+            default: 4096,
+            permissions: 0,
+            description: "Device capacity in MiB",
+        },
+        param_block_size: u16 {
+            default: 4096,
+            permissions: 0,
+            description: "Block size in bytes",
+        },
+    },
 }
 
 type ForeignBorrowed<'a, T> = <T as ForeignOwnable>::Borrowed<'a>;
@@ -35,6 +56,7 @@ type ForeignBorrowed<'a, T> = <T as ForeignOwnable>::Borrowed<'a>;
 #[derive(Debug)]
 enum IRQMode {
     None,
+    Soft,
 }
 
 impl TryFrom<u8> for IRQMode {
@@ -43,6 +65,7 @@ impl TryFrom<u8> for IRQMode {
     fn try_from(value: u8) -> Result<Self> {
         match value {
             0 => Ok(Self::None),
+            1 => Ok(Self::Soft),
             _ => Err(kernel::error::code::EINVAL),
         }
     }
@@ -57,19 +80,19 @@ impl kernel::Module for NullBlkModule {
         pr_info!("Rust null_blk loaded\n");
         let tagset = Arc::pin_init(TagSet::new(1, (), 256, 1), flags::GFP_KERNEL)?;
 
-        let irq_mode = IRQMode::None;
+        let irq_mode = (*param_irq_mode.read()).try_into()?;
+        let block_size = *param_block_size.read();
+
         let queue_data = Box::pin_init(pin_init!(
             QueueData {
                 irq_mode,
-                block_size: 4096,
+                block_size,
             }),
             flags::GFP_KERNEL,
         )?;
 
-        let block_size = queue_data.block_size;
-
         let disk = gen_disk::GenDiskBuilder::new()
-            .capacity_sectors(4096 << 11)
+            .capacity_sectors(*param_capacity_mib.read() << 11)
             .logical_block_size(block_size.into())?
             .physical_block_size(block_size.into())?
             .rotational(false)
@@ -121,7 +144,8 @@ impl Operations for NullBlkDevice {
                 // We take no refcounts on the request, so we expect to be able to
                 // end the request. The request reference must be unique at this
                 // point, and so `end_ok` cannot fail.
-                .expect("Fatal error - expected to be able to end request")
+                .expect("Fatal error - expected to be able to end request"),
+            IRQMode::Soft => mq::Request::complete(rq),
         }
 
         Ok(())
