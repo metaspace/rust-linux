@@ -37,12 +37,11 @@ impl<T: Operations> TagSet<T> {
         num_maps: u32,
     ) -> impl PinInit<Self, error::Error> {
         try_pin_init!( TagSet {
-            inner <- unsafe {kernel::init::pin_init_from_closure(move |place: *mut Opaque<bindings::blk_mq_tag_set>| -> Result<()> {
-                let place = place.cast::<bindings::blk_mq_tag_set>();
+            inner <- Opaque::try_ffi_init(move |place: *mut bindings::blk_mq_tag_set| -> Result<()> {
 
                 // SAFETY: try_ffi_init promises that `place` is writable, and
                 // zeroes is a valid bit pattern for this structure.
-                core::ptr::write_bytes(place, 0, 1);
+                unsafe { core::ptr::write_bytes(place, 0, 1) };
 
                 /// For a raw pointer to a struct, write a struct field without
                 /// creating a reference to the field
@@ -53,6 +52,7 @@ impl<T: Operations> TagSet<T> {
                 }
 
                 // SAFETY: try_ffi_init promises that `place` is writable
+                unsafe {
                     write_ptr_field!(place, ops, OperationsVTable::<T>::build());
                     write_ptr_field!(place, nr_hw_queues , nr_hw_queues);
                     write_ptr_field!(place, timeout , 0); // 0 means default which is 30 * HZ in C
@@ -62,15 +62,16 @@ impl<T: Operations> TagSet<T> {
                     write_ptr_field!(place, flags , bindings::BLK_MQ_F_SHOULD_MERGE);
                     write_ptr_field!(place, driver_data , core::ptr::null_mut::<core::ffi::c_void>());
                     write_ptr_field!(place, nr_maps , num_maps);
+                }
 
                 // SAFETY: Relevant fields of `place` are initialised above
-                let ret = bindings::blk_mq_alloc_tag_set(place);
+                let ret = unsafe { bindings::blk_mq_alloc_tag_set(place) };
                 if ret < 0 {
                     return Err(Error::from_errno(ret));
                 }
 
                 Ok(())
-            })},
+            }),
             _p: PhantomData,
         })
     }
