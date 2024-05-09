@@ -8,9 +8,12 @@ use crate::{
     bindings,
     block::mq::Operations,
     error::{Error, Result},
+    time::hrtimer::{HasTimer, Timer, TimerCallback, TimerHandle, TimerPointer},
+    time::Ktime,
     types::{ARef, AlwaysRefCounted, Opaque},
 };
 use core::{
+    ffi::c_void,
     marker::PhantomData,
     ptr::{addr_of_mut, NonNull},
     sync::atomic::{AtomicU64, Ordering},
@@ -310,6 +313,113 @@ fn atomic_relaxed_op_unless(target: &AtomicU64, op: impl Fn(u64) -> u64, pred: u
             }
         })
         .is_ok()
+}
+
+/// A handle for a timer that is embedded in a [`Request`] private data area.
+pub struct RequestTimerHandle<T>
+where
+    T: Operations,
+    T::RequestData: HasTimer<T::RequestData>,
+{
+    inner: ARef<Request<T>>,
+}
+
+unsafe impl<T> TimerHandle for RequestTimerHandle<T>
+where
+    T: Operations,
+    T::RequestData: HasTimer<T::RequestData>,
+{
+    fn cancel(&mut self) -> bool {
+        let request_data_ptr = &self.inner.wrapper_ref().data as *const T::RequestData;
+
+        // SAFETY: As we obtained `self_ptr` from a valid reference above, it
+        // must point to a valid `U`.
+        let timer_ptr = unsafe { <T::RequestData as HasTimer<T::RequestData>>::raw_get_timer(request_data_ptr) };
+
+        // SAFETY: As `timer_ptr` points into `U` and `U` is valid, `timer_ptr`
+        // must point to a valid `Timer` instance.
+        unsafe { Timer::<T::RequestData>::raw_cancel(timer_ptr) }
+    }
+
+}
+
+impl<T> RequestTimerHandle<T>
+where
+    T: Operations,
+    T::RequestData: HasTimer<T::RequestData>,
+{
+    /// Drop the timer handle without cancelling the timer.
+    ///
+    /// This is safe because [`Request`] is not dropped during normal operations.
+    pub fn dismiss(mut self) {
+        unsafe { core::ptr::drop_in_place(&mut self.inner as *mut ARef<Request<T>>) };
+        core::mem::forget(self);
+    }
+}
+
+impl<T> Drop for RequestTimerHandle<T>
+where
+    T: Operations,
+    T::RequestData: HasTimer<T::RequestData>,
+{
+
+    fn drop(&mut self) {
+        self.cancel();
+    }
+
+}
+
+impl<T> TimerPointer for ARef<Request<T>>
+where
+    T: Operations,
+    T::RequestData: HasTimer<T::RequestData>,
+    T::RequestData: Sync,
+{
+    type TimerHandle = RequestTimerHandle<T>;
+
+    fn start(self, expires: Ktime) -> RequestTimerHandle<T> {
+        let pdu_ptr = self.data_ref() as *const T::RequestData;
+
+        unsafe{ T::RequestData::start(pdu_ptr, expires)};
+
+        RequestTimerHandle {
+            inner: self,
+        }
+    }
+}
+
+impl<T> kernel::time::hrtimer::RawTimerCallback for ARef<Request<T>>
+where
+    T: Operations,
+    T::RequestData: HasTimer<T::RequestData>,
+    T::RequestData: for<'a> TimerCallback<CallbackTarget<'a> = ARef<Request<T>>>,
+    T::RequestData: for<'a> TimerCallback<CallbackTargetParameter<'a> = ARef<Request<T>>>,
+    T::RequestData: Sync,
+{
+    unsafe extern "C" fn run(ptr: *mut bindings::hrtimer) -> bindings::hrtimer_restart {
+        // `Timer` is `repr(transparent)`
+        let timer_ptr = ptr.cast::<kernel::time::hrtimer::Timer<T::RequestData>>();
+
+        // SAFETY: By C API contract `ptr` is the pointer we passed when
+        // enqueing the timer, so it is a `Timer<T::RequestData>` embedded in a `T::RequestData`
+        let request_data_ptr = unsafe { T::RequestData::timer_container_of(timer_ptr) };
+
+        let offset = core::mem::offset_of!(RequestDataWrapper<T>, data);
+
+        // SAFETY: This sub stays withing the `bindings::request` allocation and does not wrap
+        let pdu_ptr = unsafe { request_data_ptr.cast::<u8>().sub(offset).cast::<RequestDataWrapper<T>>() };
+
+        // SAFETY: The pointer was returned by `T::timer_container_of` so it
+        // points to a valid `T::RequestDataWrapper`
+        let request_ptr = unsafe { bindings::blk_mq_rq_from_pdu(pdu_ptr.cast::<c_void>()) };
+
+        // TODO SAFETY
+        let request_ref = unsafe {&*(request_ptr as *const Request<T>)};
+
+        let aref: ARef<Request<T>> = request_ref.into();
+
+        T::RequestData::run(aref).into()
+    }
 }
 
 // SAFETY: All instances of `Request<T>` are reference counted. This
