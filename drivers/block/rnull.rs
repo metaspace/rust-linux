@@ -7,9 +7,10 @@
 //! - blk-mq interface
 //! - direct completion
 //! - softirq completion
+//! - timer completion
 //!
 //! The driver is configured at module load time by parameters
-//! `param_capacity_mib` and `param_irq_mode`.
+//! `param_capacity_mib`, `param_irq_mode` and `param_completion_time_nsec!.
 
 use kernel::{
     alloc::flags,
@@ -19,6 +20,7 @@ use kernel::{
         Operations, TagSet,
     },
     error::Result,
+    hrtimer::{RawTimer, TimerCallback},
     new_mutex, pr_info,
     prelude::*,
     sync::{Arc, Mutex},
@@ -36,12 +38,17 @@ module! {
         param_irq_mode: u8 {
             default: 0,
             permissions: 0,
-            description: "IRQ Mode (0: None, 1: Soft)",
+            description: "IRQ Mode (0: None, 1: Soft, 2: Timer)",
         },
         param_capacity_mib: u64 {
             default: 4096,
             permissions: 0,
             description: "Device capacity in MiB",
+        },
+        param_completion_time_nsec: u64 {
+            default: 1_000_000,
+            permissions: 0,
+            description: "Completion time in nano seconds for timer mode",
         },
         param_block_size: u16 {
             default: 4096,
@@ -57,6 +64,7 @@ type ForeignBorrowed<'a, T> = <T as ForeignOwnable>::Borrowed<'a>;
 enum IRQMode {
     None,
     Soft,
+    Timer,
 }
 
 impl TryFrom<u8> for IRQMode {
@@ -66,6 +74,7 @@ impl TryFrom<u8> for IRQMode {
         match value {
             0 => Ok(Self::None),
             1 => Ok(Self::Soft),
+            2 => Ok(Self::Timer),
             _ => Err(kernel::error::code::EINVAL),
         }
     }
@@ -85,6 +94,7 @@ impl kernel::Module for NullBlkModule {
 
         let queue_data = Box::pin_init(pin_init!(
             QueueData {
+                completion_time_nsec: *param_completion_time_nsec.read(),
                 irq_mode,
                 block_size,
             }),
@@ -109,14 +119,30 @@ struct NullBlkDevice;
 
 #[pin_data]
 struct QueueData {
+    completion_time_nsec: u64,
     irq_mode: IRQMode,
     block_size: u16,
 }
 
 #[pin_data]
 struct Pdu {
+    #[pin]
+    timer: kernel::hrtimer::Timer<Self>,
 }
 
+impl TimerCallback for Pdu {
+    type Receiver = ARef<mq::Request<NullBlkDevice>>;
+
+    fn run(this: Self::Receiver) {
+        mq::Request::end_ok(this)
+            .map_err(|_e| kernel::error::code::EIO)
+            .expect("Failed to complete request");
+    }
+}
+
+kernel::impl_has_timer! {
+    impl HasTimer<Self> for Pdu { self.timer }
+}
 
 #[vtable]
 impl Operations for NullBlkDevice {
@@ -128,7 +154,9 @@ impl Operations for NullBlkDevice {
     fn new_request_data(
         _tagset_data: ForeignBorrowed<'_, Self::TagSetData>,
     ) -> impl PinInit<Self::RequestData> {
-        pin_init!( Pdu {} )
+        pin_init!( Pdu {
+            timer <- kernel::hrtimer::Timer::new(),
+        })
     }
 
     #[inline(always)]
@@ -146,6 +174,7 @@ impl Operations for NullBlkDevice {
                 // point, and so `end_ok` cannot fail.
                 .expect("Fatal error - expected to be able to end request"),
             IRQMode::Soft => mq::Request::complete(rq),
+            IRQMode::Timer => rq.schedule(queue_data.completion_time_nsec),
         }
 
         Ok(())
