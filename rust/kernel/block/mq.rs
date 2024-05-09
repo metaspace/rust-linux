@@ -74,29 +74,44 @@
 //!
 //! #[vtable]
 //! impl Operations for MyBlkDevice {
+//!     type RequestData = ();
+//!     type RequestDataInit = impl PinInit<()>;
+//!     type QueueData = ();
+//!     type HwData = ();
+//!     type TagSetData = ();
 //!
-//!     fn queue_rq(rq: ARef<Request<Self>>, _is_last: bool) -> Result {
-//!         Request::end_ok(rq);
+//!     fn new_request_data(
+//!         _tagset_data: <Self::TagSetData as ForeignOwnable>::Borrowed<'_>,
+//!     ) -> Self::RequestDataInit {
+//!         kernel::init::zeroed()
+//!     }
+//!
+//!     fn queue_rq(_hw_data: (), _queue_data: (), rq: ARef<Request<Self>>, _is_last: bool) -> Result {
+//!         rq.start();
+//!         rq.end_ok();
 //!         Ok(())
 //!     }
 //!
 //!     fn commit_rqs(
+//!         _hw_data: <Self::HwData as ForeignOwnable>::Borrowed<'_>,
+//!         _queue_data: <Self::QueueData as ForeignOwnable>::Borrowed<'_>,
 //!     ) {
 //!     }
 //!
-//!     fn complete(rq: ARef<Request<Self>>) {
-//!         Request::end_ok(rq);
+//!     fn complete(rq: &Request<Self>) {
+//!         rq.end_ok();
 //!     }
 //!
 //!     fn init_hctx(
+//!         _tagset_data: <Self::TagSetData as ForeignOwnable>::Borrowed<'_>,
 //!         _hctx_idx: u32,
-//!     ) -> Result {
+//!     ) -> Result<Self::HwData> {
 //!         Ok(())
 //!     }
 //! }
 //!
-//! let tagset: Arc<TagSet<MyBlkDevice>> = Arc::pin_init(TagSet::try_new(1, 256, 1))?;
-//! let mut disk = gen_disk::try_new(tagset)?;
+//! let tagset: Arc<TagSet<MyBlkDevice>> = Arc::pin_init(TagSet::try_new(1, (), 256, 1))?;
+//! let mut disk = GenDisk::try_new(tagset, ())?;
 //! disk.set_name(format_args!("myblk"))?;
 //! disk.set_capacity_sectors(4096);
 //! disk.add()?;
