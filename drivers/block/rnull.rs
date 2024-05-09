@@ -4,29 +4,39 @@
 //!
 //! Supported features:
 //!
+//! - optional memory backing
 //! - blk-mq interface
 //! - direct completion
 //! - softirq completion
 //! - timer completion
 //!
-//! The driver is configured at module load time by parameters `irq_mode`,
-//! capacity_mib`, `block_size` and `completion_time_nsec!.
+//! The driver is configured at module load time by parameters `mrmory_backed`,
+//! `irq_mode`, capacity_mib`, `block_size` and `completion_time_nsec!.
+
+use core::ops::Deref;
 
 use kernel::{
     alloc::flags,
-    block::mq::{
-        self,
-        gen_disk::{self, GenDisk},
-        Operations, TagSet,
+    bindings,
+    block::{
+        bio::Segment,
+        mq::{self, gen_disk::{self, GenDisk}, Operations, TagSet},
     },
     error::Result,
     time::hrtimer::{ClockSource, TimerCallback, TimerMode, TimerPointer, TimerRestart},
-    new_mutex, pr_info,
+    new_mutex,
+    page::Page,
+    pr_info,
     prelude::*,
     sync::{Arc, Mutex},
     time::Ktime,
     types::{ARef, ForeignOwnable},
+    xarray::XArray,
 };
+
+use kernel::new_spinlock;
+use kernel::sync::SpinLock;
+use kernel::CacheAligned;
 
 // TODO: Move parameters to their own namespace
 module! {
@@ -96,10 +106,12 @@ impl kernel::Module for NullBlkModule {
 
         let queue_data = Box::try_pin_init(
             try_pin_init!(QueueData {
+                tree <- TreeContainer::new(),
                 completion_time_nsec: <u64 as TryInto<i64>>::try_into(
                     *module_parameters::completion_time_nsec.get()
                 )?,
                 irq_mode,
+                memory_backed: *module_parameters::memory_backed.get() != 0,
                 block_size,
             }),
             flags::GFP_KERNEL,
@@ -120,11 +132,97 @@ impl kernel::Module for NullBlkModule {
 
 struct NullBlkDevice;
 
+type Tree = XArray<KBox<Page>>;
+type TreeRef<'a> = &'a Tree;
+
+#[pin_data]
+struct TreeContainer {
+    // `XArray` is safe to use without a lock, as it applies internal locking.
+    // However, there are two reasons to use an external lock: a) cache line
+    // contention and b) we don't want to take the lock for each page we
+    // process.
+    //
+    // A: The `XArray` lock (xa_lock) is located on the same cache line as the
+    // xarray data pointer (xa_head). The effect of this arrangement is that
+    // under heavy contention, we often get a cache miss when we try to follow
+    // the data pointer after acquiring the lock. We would rather have consumers
+    // spinning on another lock, so we do not get a miss on xa_head. This issue
+    // can potentially be fixed by padding the C `struct xarray`.
+    //
+    // B: The current `XArray` Rust API requires that we take the `xa_lock` for
+    // each `XArray` operation. This is very inefficient when the lock is
+    // contended and we have many operations to perform. Eventually we should
+    // update the `XArray` API to allow multiple tree operations under a single
+    // lock acquisition. For now, serialize tree access with an external lock.
+    #[pin]
+    tree: CacheAligned<Tree>,
+    #[pin]
+    lock: CacheAligned<SpinLock<()>>,
+}
+
+impl TreeContainer {
+    fn new() -> impl PinInit<Self> {
+        pin_init!(TreeContainer {
+            tree <- CacheAligned::new_initializer(XArray::new(kernel::xarray::AllocKind::Alloc)),
+            lock <- CacheAligned::new_initializer(new_spinlock!((), "rnullb:mem")),
+        })
+    }
+}
+
 #[pin_data]
 struct QueueData {
+    #[pin]
+    tree: TreeContainer,
     completion_time_nsec: i64,
     irq_mode: IRQMode,
+    memory_backed: bool,
     block_size: u32,
+}
+
+impl NullBlkDevice {
+    #[inline(always)]
+    fn write(tree: TreeRef<'_>, sector: u64, segment: &Segment<'_>) -> Result {
+        let idx = sector >> bindings::PAGE_SECTORS_SHIFT;
+
+        let mut guard = tree.lock();
+        let mut page = if let Some(page) = guard.get_mut(idx) {
+            page
+        } else {
+            guard.store(idx, KBox::new(Page::alloc_page(flags::GFP_KERNEL)?, flags::GFP_KERNEL)?, flags::GFP_KERNEL)?;
+            guard.get_mut(idx).unwrap()
+        };
+
+        segment.copy_to_page(&mut page)?;
+
+        Ok(())
+    }
+
+    #[inline(always)]
+    fn read(tree: TreeRef<'_>, sector: u64, segment: &mut Segment<'_>) -> Result {
+        let idx = sector >> bindings::PAGE_SECTORS_SHIFT;
+
+        let guard = tree.lock();
+        if let Some(page) = guard.get(idx) {
+            segment.copy_from_page(page)?;
+        }
+
+        Ok(())
+    }
+
+    #[inline(never)]
+    fn transfer(
+        command: bindings::req_op,
+        tree: TreeRef<'_>,
+        sector: u64,
+        segment: &mut Segment<'_>,
+    ) -> Result {
+        match command {
+            bindings::req_op_REQ_OP_WRITE => Self::write(tree, sector, segment)?,
+            bindings::req_op_REQ_OP_READ => Self::read(tree, sector, segment)?,
+            _ => (),
+        }
+        Ok(())
+    }
 }
 
 #[pin_data]
@@ -171,6 +269,21 @@ impl Operations for NullBlkDevice {
         rq: ARef<mq::Request<Self>>,
         _is_last: bool,
     ) -> Result {
+        if queue_data.memory_backed {
+            let guard = queue_data.tree.lock.lock();
+            let tree = queue_data.tree.tree.deref();
+
+            let mut sector = rq.sector() as u64;
+            for bio in rq.bio_iter() {
+                for mut segment in bio.segment_iter() {
+                    Self::transfer(rq.command(), tree, sector, &mut segment)?;
+                    sector += segment.len() as u64 >> bindings::SECTOR_SHIFT;
+                }
+            }
+
+            drop(guard);
+        }
+
         match queue_data.irq_mode {
             IRQMode::None => mq::Request::end_ok(rq)
                 .map_err(|_e| kernel::error::code::EIO)
