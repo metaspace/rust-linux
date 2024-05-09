@@ -89,18 +89,22 @@ struct QueueData {
     block_size: u16,
 }
 
+#[pin_data]
+struct Pdu {
+}
+
 
 #[vtable]
 impl Operations for NullBlkDevice {
     type QueueData = Box<QueueData>;
     type TagSetData = ();
     type HwData = ();
-    type RequestData = ();
+    type RequestData = Pdu;
 
     fn new_request_data(
         _tagset_data: ForeignBorrowed<'_, Self::TagSetData>,
     ) -> impl PinInit<Self::RequestData> {
-        kernel::init::zeroed()
+        pin_init!( Pdu {} )
     }
 
     #[inline(always)]
