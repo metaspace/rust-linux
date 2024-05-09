@@ -59,6 +59,12 @@ impl kernel::Module for NullBlkModule {
     }
 }
 
+impl Drop for NullBlkModule {
+    fn drop(&mut self) {
+        pr_info!("Dropping rnullb\n");
+    }
+}
+
 struct NullBlkDevice;
 
 #[vtable]
