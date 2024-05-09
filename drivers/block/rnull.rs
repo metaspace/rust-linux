@@ -58,11 +58,11 @@ impl kernel::Module for NullBlkModule {
         let tagset = Arc::pin_init(TagSet::new(1, (), 256, 1), flags::GFP_KERNEL)?;
 
         let irq_mode = IRQMode::None;
-        let queue_data = Box::new(
+        let queue_data = Box::pin_init(pin_init!(
             QueueData {
                 irq_mode,
                 block_size: 4096,
-            },
+            }),
             flags::GFP_KERNEL,
         )?;
 
@@ -84,6 +84,7 @@ impl kernel::Module for NullBlkModule {
 struct NullBlkDevice;
 
 
+#[pin_data]
 struct QueueData {
     irq_mode: IRQMode,
     block_size: u16,
@@ -96,7 +97,7 @@ struct Pdu {
 
 #[vtable]
 impl Operations for NullBlkDevice {
-    type QueueData = Box<QueueData>;
+    type QueueData = Pin<Box<QueueData>>;
     type TagSetData = ();
     type HwData = ();
     type RequestData = Pdu;
