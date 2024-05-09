@@ -7,7 +7,7 @@ use alloc::boxed::Box;
 use core::{
     cell::UnsafeCell,
     marker::{PhantomData, PhantomPinned},
-    mem::MaybeUninit,
+    mem::{ManuallyDrop, MaybeUninit},
     ops::{Deref, DerefMut},
     ptr::NonNull,
 };
@@ -374,6 +374,13 @@ impl<T: AlwaysRefCounted> ARef<T> {
             ptr,
             _p: PhantomData,
         }
+    }
+
+    /// Convert `self` into a pointer without running the destructor. This will
+    /// leak a refcount.
+    pub fn into_raw(self) -> *mut T {
+        let this = ManuallyDrop::new(self);
+        this.ptr.as_ptr()
     }
 }
 
