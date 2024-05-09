@@ -53,12 +53,12 @@ fn add_disk(tagset: Arc<TagSet<NullBlkDevice>>) -> Result<GenDisk<NullBlkDevice,
 
     let irq_mode = IRQMode::None;
 
-    let queue_data = Box::try_new(
+    let queue_data = Box::pin_init(pin_init!(
         QueueData {
             irq_mode,
             block_size,
         }
-    )?;
+    ))?;
 
     let block_size = queue_data.block_size;
 
@@ -90,6 +90,7 @@ impl Drop for NullBlkModule {
 struct NullBlkDevice;
 
 
+#[pin_data]
 struct QueueData {
     irq_mode: IRQMode,
     block_size: u16,
@@ -103,7 +104,7 @@ struct Pdu {
 #[vtable]
 impl Operations for NullBlkDevice {
     type RequestData = Pdu;
-    type QueueData = Box<QueueData>;
+    type QueueData = Pin<Box<QueueData>>;
     type HwData = ();
     type TagSetData = ();
 
