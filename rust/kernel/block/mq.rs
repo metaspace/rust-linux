@@ -69,20 +69,34 @@
 //! #[vtable]
 //! impl Operations for MyBlkDevice {
 //!     type QueueData = ();
+//!     type HwData = ();
 //!     type TagSetData = ();
 //!
-//!     fn queue_rq(_queue_data: (), rq: ARef<Request<Self>>, _is_last: bool) -> Result {
+//!     fn queue_rq(
+//!         _hw_data: (),
+//!         _queue_data: (),
+//!         rq: ARef<Request<Self>>,
+//!         _is_last: bool,
+//!     ) -> Result {
 //!         Request::end_ok(rq);
 //!         Ok(())
 //!     }
 //!
 //!     fn commit_rqs(
+//!         _hw_data: <Self::HwData as ForeignOwnable>::Borrowed<'_>,
 //!         _queue_data: <Self::QueueData as ForeignOwnable>::Borrowed<'_>,
 //!     ) {
 //!     }
 //!
 //!     fn complete(rq: ARef<Request<Self>>) {
 //!         Request::end_ok(rq);
+//!     }
+//!
+//!     fn init_hctx(
+//!         _tagset_data: <Self::TagSetData as ForeignOwnable>::Borrowed<'_>,
+//!         _hctx_idx: u32,
+//!     ) -> Result<Self::HwData> {
+//!         Ok(())
 //!     }
 //! }
 //!
