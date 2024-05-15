@@ -6,21 +6,16 @@
 //!
 //! - blk-mq interface
 //! - direct completion
-//! - block size 4k
 //!
 //! The driver is not configurable.
 
 use kernel::{
-    block::mq::{
-        self,
-        gen_disk::{self, GenDisk},
-        Operations, TagSet,
-    },
+    block::mq::{self, gen_disk::{self, GenDisk}, Operations, TagSet},
     error::Result,
     new_mutex, pr_info,
     prelude::*,
     sync::{Arc, Mutex},
-    types::ARef,
+    types::{ARef, ForeignOwnable},
 };
 
 module! {
@@ -28,6 +23,22 @@ module! {
     name: "rnull_mod",
     author: "Andreas Hindborg",
     license: "GPL v2",
+}
+
+#[derive(Debug)]
+enum IRQMode {
+    None,
+}
+
+impl TryFrom<u8> for IRQMode {
+    type Error = kernel::error::Error;
+
+    fn try_from(value: u8) -> Result<Self> {
+        match value {
+            0 => Ok(Self::None),
+            _ => Err(kernel::error::code::EINVAL),
+        }
+    }
 }
 
 struct NullBlkModule {
@@ -40,7 +51,18 @@ fn add_disk(tagset: Arc<TagSet<NullBlkDevice>>) -> Result<GenDisk<NullBlkDevice,
         return Err(kernel::error::code::EINVAL);
     }
 
-    let mut disk = gen_disk::try_new(tagset, ())?;
+    let irq_mode = IRQMode::None;
+
+    let queue_data = Box::try_new(
+        QueueData {
+            irq_mode,
+            block_size,
+        }
+    )?;
+
+    let block_size = queue_data.block_size;
+
+    let mut disk = gen_disk::try_new(tagset, queue_data)?;
     disk.set_name(format_args!("rnullb{}", 0))?;
     disk.set_capacity_sectors(4096 << 11);
     disk.set_queue_logical_block_size(block_size.into());
@@ -67,22 +89,47 @@ impl Drop for NullBlkModule {
 
 struct NullBlkDevice;
 
+
+struct QueueData {
+    irq_mode: IRQMode,
+    block_size: u16,
+}
+
+
 #[vtable]
 impl Operations for NullBlkDevice {
-    type QueueData = ();
-    type TagSetData = ();
+    type RequestData = ();
+    type QueueData = Box<QueueData>;
     type HwData = ();
+    type TagSetData = ();
+
+    fn new_request_data(
+        _tagset_data: <Self::TagSetData as ForeignOwnable>::Borrowed<'_>,
+    ) -> impl PinInit<Self::RequestData> {
+        kernel::init::zeroed()
+    }
 
     #[inline(always)]
-    fn queue_rq(_hw_data: (), _queue_data: (), rq: ARef<mq::Request<Self>>, _is_last: bool) -> Result {
-        mq::Request::end_ok(rq)
-            .map_err(|_e| kernel::error::code::EIO)
-            .expect("Failed to complete request");
+    fn queue_rq(
+        _hw_data: (),
+        queue_data: &QueueData,
+        rq: ARef<mq::Request<Self>>,
+        _is_last: bool,
+    ) -> Result {
+        match queue_data.irq_mode {
+            IRQMode::None => mq::Request::end_ok(rq)
+                .map_err(|_e| kernel::error::code::EIO)
+                .expect("Failed to complete request"),
+        }
 
         Ok(())
     }
 
-    fn commit_rqs(_hw_data: (), _queue_data: ()) {}
+    fn commit_rqs(
+        _hw_data: <Self::HwData as ForeignOwnable>::Borrowed<'_>,
+        _queue_data: <Self::QueueData as ForeignOwnable>::Borrowed<'_>,
+    ) {
+    }
 
     fn complete(rq: ARef<mq::Request<Self>>) {
         mq::Request::end_ok(rq)
@@ -90,7 +137,10 @@ impl Operations for NullBlkDevice {
             .expect("Failed to complete request")
     }
 
-    fn init_hctx(_tagset_data: (), _hctx_idx: u32) -> Result {
+    fn init_hctx(
+        _tagset_data: <Self::TagSetData as ForeignOwnable>::Borrowed<'_>,
+        _hctx_idx: u32,
+    ) -> Result<Self::HwData> {
         Ok(())
     }
 }
