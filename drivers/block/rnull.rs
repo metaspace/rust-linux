@@ -21,7 +21,7 @@ use kernel::{
     new_mutex, pr_info,
     prelude::*,
     sync::{Arc, Mutex},
-    types::ARef,
+    types::{ARef, ForeignOwnable},
 };
 
 module! {
@@ -31,6 +31,8 @@ module! {
     description: "Rust implementation of the C null block driver",
     license: "GPL v2",
 }
+
+type ForeignBorrowed<'a, T> = <T as ForeignOwnable>::Borrowed<'a>;
 
 struct NullBlkModule {
     _disk: Pin<KBox<Mutex<GenDisk<NullBlkDevice>>>>,
@@ -61,6 +63,13 @@ impl Operations for NullBlkDevice {
     type QueueData = ();
     type TagSetData = ();
     type HwData = ();
+    type RequestData = ();
+
+    fn new_request_data(
+        _tagset_data: ForeignBorrowed<'_, Self::TagSetData>,
+    ) -> impl PinInit<Self::RequestData> {
+        kernel::init::zeroed()
+    }
 
     #[inline(always)]
     fn queue_rq(
