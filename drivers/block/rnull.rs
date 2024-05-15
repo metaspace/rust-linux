@@ -40,7 +40,7 @@ fn add_disk(tagset: Arc<TagSet<NullBlkDevice>>) -> Result<GenDisk<NullBlkDevice,
         return Err(kernel::error::code::EINVAL);
     }
 
-    let mut disk = gen_disk::try_new(tagset)?;
+    let mut disk = gen_disk::try_new(tagset, ())?;
     disk.set_name(format_args!("rnullb{}", 0))?;
     disk.set_capacity_sectors(4096 << 11);
     disk.set_queue_logical_block_size(block_size.into());
@@ -69,8 +69,10 @@ struct NullBlkDevice;
 
 #[vtable]
 impl Operations for NullBlkDevice {
+    type QueueData = ();
+
     #[inline(always)]
-    fn queue_rq(rq: ARef<mq::Request<Self>>, _is_last: bool) -> Result {
+    fn queue_rq(_queue_data: (), rq: ARef<mq::Request<Self>>, _is_last: bool) -> Result {
         mq::Request::end_ok(rq)
             .map_err(|_e| kernel::error::code::EIO)
             .expect("Failed to complete request");
@@ -78,7 +80,7 @@ impl Operations for NullBlkDevice {
         Ok(())
     }
 
-    fn commit_rqs() {}
+    fn commit_rqs(_queue_data: ()) {}
 
     fn complete(rq: ARef<mq::Request<Self>>) {
         mq::Request::end_ok(rq)
