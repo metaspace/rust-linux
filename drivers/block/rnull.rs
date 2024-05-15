@@ -52,7 +52,7 @@ fn add_disk(tagset: Arc<TagSet<NullBlkDevice>>) -> Result<GenDisk<NullBlkDevice,
 impl kernel::Module for NullBlkModule {
     fn init(_module: &'static ThisModule) -> Result<Self> {
         pr_info!("Rust null_blk loaded\n");
-        let tagset = Arc::pin_init(TagSet::try_new(1, 256, 1))?;
+        let tagset = Arc::pin_init(TagSet::try_new(1, (), 256, 1))?;
         let disk = Box::pin_init(new_mutex!(add_disk(tagset)?, "nullb:disk"))?;
 
         Ok(Self { _disk: disk })
@@ -70,6 +70,7 @@ struct NullBlkDevice;
 #[vtable]
 impl Operations for NullBlkDevice {
     type QueueData = ();
+    type TagSetData = ();
 
     #[inline(always)]
     fn queue_rq(_queue_data: (), rq: ARef<mq::Request<Self>>, _is_last: bool) -> Result {
