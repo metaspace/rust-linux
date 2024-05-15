@@ -59,9 +59,15 @@ struct NullBlkDevice;
 impl Operations for NullBlkDevice {
     type QueueData = ();
     type TagSetData = ();
+    type HwData = ();
 
     #[inline(always)]
-    fn queue_rq(_queue_data: (), rq: ARef<mq::Request<Self>>, _is_last: bool) -> Result {
+    fn queue_rq(
+        _hw_data: (),
+        _queue_data: (),
+        rq: ARef<mq::Request<Self>>,
+        _is_last: bool,
+    ) -> Result {
         mq::Request::end_ok(rq)
             .map_err(|_e| kernel::error::code::EIO)
             // We take no refcounts on the request, so we expect to be able to
@@ -72,5 +78,9 @@ impl Operations for NullBlkDevice {
         Ok(())
     }
 
-    fn commit_rqs(_queue_data: ()) {}
+    fn commit_rqs(_hw_data: (), _queue_data: ()) {}
+
+    fn init_hctx(_tagset_data: (), _hctx_idx: u32) -> Result {
+        Ok(())
+    }
 }
