@@ -38,7 +38,7 @@ struct NullBlkModule {
 impl kernel::Module for NullBlkModule {
     fn init(_name: &'static CStr, _module: &'static ThisModule) -> Result<Self> {
         pr_info!("Rust null_blk loaded\n");
-        let tagset = Arc::pin_init(TagSet::new(1, 256, 1), flags::GFP_KERNEL)?;
+        let tagset = Arc::pin_init(TagSet::new(1, (), 256, 1), flags::GFP_KERNEL)?;
 
         let disk = gen_disk::GenDiskBuilder::new()
             .capacity_sectors(4096 << 11)
@@ -58,6 +58,7 @@ struct NullBlkDevice;
 #[vtable]
 impl Operations for NullBlkDevice {
     type QueueData = ();
+    type TagSetData = ();
 
     #[inline(always)]
     fn queue_rq(_queue_data: (), rq: ARef<mq::Request<Self>>, _is_last: bool) -> Result {
