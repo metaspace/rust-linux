@@ -69,6 +69,7 @@
 //! #[vtable]
 //! impl Operations for MyBlkDevice {
 //!     type QueueData = ();
+//!     type TagSetData = ();
 //!
 //!     fn queue_rq(_queue_data: (), rq: ARef<Request<Self>>, _is_last: bool) -> Result {
 //!         Request::end_ok(rq);
@@ -85,7 +86,7 @@
 //!     }
 //! }
 //!
-//! let tagset: Arc<TagSet<MyBlkDevice>> = Arc::pin_init(TagSet::try_new(1, 256, 1))?;
+//! let tagset: Arc<TagSet<MyBlkDevice>> = Arc::pin_init(TagSet::try_new(1, (), 256, 1))?;
 //! let mut disk = gen_disk::try_new(tagset, ())?;
 //! disk.set_name(format_args!("myblk"))?;
 //! disk.set_capacity_sectors(4096);
