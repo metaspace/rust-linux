@@ -75,16 +75,18 @@
 //!
 //! #[vtable]
 //! impl Operations for MyBlkDevice {
+//!     type RequestData = ();
 //!     type QueueData = ();
 //!     type HwData = ();
 //!     type TagSetData = ();
 //!
-//!     fn queue_rq(
-//!         _hw_data: (),
-//!         _queue_data: (),
-//!         rq: ARef<Request<Self>>,
-//!         _is_last: bool,
-//!     ) -> Result {
+//!     fn new_request_data(
+//!         _tagset_data: <Self::TagSetData as ForeignOwnable>::Borrowed<'_>,
+//!     ) -> impl PinInit<()> {
+//!         kernel::init::zeroed()
+//!     }
+//!
+//!     fn queue_rq(_hw_data: (), _queue_data: (), rq: ARef<Request<Self>>, _is_last: bool) -> Result {
 //!         Request::end_ok(rq);
 //!         Ok(())
 //!     }
