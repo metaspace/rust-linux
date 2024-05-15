@@ -59,7 +59,7 @@ impl<T: Operations> TagSet<T> {
                     write_ptr_field!(place, timeout , 0); // 0 means default which is 30 * HZ in C
                     write_ptr_field!(place, numa_node , bindings::NUMA_NO_NODE);
                     write_ptr_field!(place, queue_depth , num_tags);
-                    write_ptr_field!(place, cmd_size , core::mem::size_of::<RequestDataWrapper>().try_into()?);
+                    write_ptr_field!(place, cmd_size , core::mem::size_of::<RequestDataWrapper<T>>().try_into()?);
                     write_ptr_field!(place, flags , bindings::BLK_MQ_F_SHOULD_MERGE);
                     write_ptr_field!(place, driver_data , tagset_data.into_foreign() as _);
                     write_ptr_field!(place, nr_maps , num_maps);

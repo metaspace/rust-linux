@@ -156,7 +156,6 @@ impl<T: Operations, S: GenDiskState> Drop for GenDisk<T, S> {
 
         // TODO: This will `WARN` if the disk was not added. Since we cannot
         // specialize drop, we have to call it, or track state with a flag.
-
         // SAFETY: By type invariant, `self.gendisk` points to a valid and
         // initialized instance of `struct gendisk`
         unsafe { bindings::del_gendisk(self.gendisk) };
