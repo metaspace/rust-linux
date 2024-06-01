@@ -173,19 +173,20 @@ impl<'a, T: ForeignOwnable> Drop for Reservation<'a, T> {
 /// # Examples
 ///
 /// ```rust
-/// use kernel::xarray::{XArray, flags};
+/// use kernel::xarray::{XArray, flags as xflags};
 /// use kernel::prelude::*;
 /// use kernel::sync::Arc;
+/// use kernel::alloc::flags;
 ///
 /// struct Foo {
 ///     a: u32,
 ///     b: u32,
 /// }
 ///
-/// let arr = Box::pin_init(XArray::<Arc<Foo>>::new(flags::ALLOC1))
+/// let arr = Box::pin_init(XArray::<Arc<Foo>>::new(xflags::ALLOC1), flags::GFP_KERNEL)
 ///                        .expect("Unable to allocate XArray");
 ///
-/// let item = Arc::try_new(Foo { a : 1, b: 2 }).expect("Unable to allocate Foo");
+/// let item = Arc::new(Foo { a : 1, b: 2 }, flags::GFP_KERNEL).expect("Unable to allocate Foo");
 /// let index = arr.alloc(item).expect("Error allocating Index");
 ///
 /// if let Some(guard) = arr.get_locked(index) {
@@ -195,7 +196,7 @@ impl<'a, T: ForeignOwnable> Drop for Reservation<'a, T> {
 ///     pr_info!("No value found in index {}", index);
 /// }
 ///
-/// let item = Arc::try_new(Foo { a : 3, b: 4 }).expect("Unable to allocate Foo");
+/// let item = Arc::new(Foo { a : 3, b: 4 }, flags::GFP_KERNEL).expect("Unable to allocate Foo");
 /// let index = arr.alloc(item).expect("Error allocating Index");
 ///
 /// if let Some(removed_data) = arr.remove(index) {
