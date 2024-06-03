@@ -207,6 +207,17 @@ pub struct GenDisk<T: Operations> {
 // `TagSet` It is safe to send this to other threads as long as T is Send.
 unsafe impl<T: Operations + Send> Send for GenDisk<T> {}
 
+impl<T: Operations> GenDisk<T> {
+    /// Call to tell the block layer the capacity of the device in sectors (512
+    /// bytes).
+    pub fn set_capacity_sectors(&self, sectors: u64) {
+        // SAFETY: By type invariant, `self.gendisk` points to a valid and
+        // initialized instance of `struct gendisk`. `set_capacity` takes a lock
+        // to synchronize this operation, so we will not race.
+        unsafe { bindings::set_capacity(self.gendisk, sectors) };
+    }
+}
+
 impl<T: Operations> Drop for GenDisk<T> {
     fn drop(&mut self) {
         // SAFETY: By type invariant, `self.gendisk` points to a valid and
