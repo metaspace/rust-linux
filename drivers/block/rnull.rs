@@ -45,7 +45,7 @@ impl kernel::Module for NullBlkModule {
             .logical_block_size(4096)?
             .physical_block_size(4096)?
             .rotational(false)
-            .build(format_args!("rnullb{}", 0), tagset)?;
+            .build(format_args!("rnullb{}", 0), tagset, ())?;
 
         let disk = Box::pin_init(new_mutex!(disk, "nullb:disk"), flags::GFP_KERNEL)?;
 
@@ -57,8 +57,10 @@ struct NullBlkDevice;
 
 #[vtable]
 impl Operations for NullBlkDevice {
+    type QueueData = ();
+
     #[inline(always)]
-    fn queue_rq(rq: ARef<mq::Request<Self>>, _is_last: bool) -> Result {
+    fn queue_rq(_queue_data: (), rq: ARef<mq::Request<Self>>, _is_last: bool) -> Result {
         mq::Request::end_ok(rq)
             .map_err(|_e| kernel::error::code::EIO)
             // We take no refcounts on the request, so we expect to be able to
@@ -69,5 +71,5 @@ impl Operations for NullBlkDevice {
         Ok(())
     }
 
-    fn commit_rqs() {}
+    fn commit_rqs(_queue_data: ()) {}
 }
