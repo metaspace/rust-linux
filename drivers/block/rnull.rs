@@ -6,7 +6,6 @@
 //!
 //! - blk-mq interface
 //! - direct completion
-//! - block size 4k
 //!
 //! The driver is not configurable.
 
@@ -62,14 +61,17 @@ impl kernel::Module for NullBlkModule {
         let queue_data = Box::new(
             QueueData {
                 irq_mode,
+                block_size: 4096,
             },
             flags::GFP_KERNEL,
         )?;
 
+        let block_size = queue_data.block_size;
+
         let disk = gen_disk::GenDiskBuilder::new()
             .capacity_sectors(4096 << 11)
-            .logical_block_size(4096)?
-            .physical_block_size(4096)?
+            .logical_block_size(block_size.into())?
+            .physical_block_size(block_size.into())?
             .rotational(false)
             .build(format_args!("rnullb{}", 0), tagset, queue_data)?;
 
@@ -84,6 +86,7 @@ struct NullBlkDevice;
 
 struct QueueData {
     irq_mode: IRQMode,
+    block_size: u16,
 }
 
 
