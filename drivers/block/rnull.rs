@@ -33,6 +33,22 @@ module! {
 
 type ForeignBorrowed<'a, T> = <T as ForeignOwnable>::Borrowed<'a>;
 
+#[derive(Debug)]
+enum IRQMode {
+    None,
+}
+
+impl TryFrom<u8> for IRQMode {
+    type Error = kernel::error::Error;
+
+    fn try_from(value: u8) -> Result<Self> {
+        match value {
+            0 => Ok(Self::None),
+            _ => Err(kernel::error::code::EINVAL),
+        }
+    }
+}
+
 struct NullBlkModule {
     _disk: Pin<Box<Mutex<GenDisk<NullBlkDevice>>>>,
 }
@@ -42,12 +58,20 @@ impl kernel::Module for NullBlkModule {
         pr_info!("Rust null_blk loaded\n");
         let tagset = Arc::pin_init(TagSet::new(1, (), 256, 1), flags::GFP_KERNEL)?;
 
+        let irq_mode = IRQMode::None;
+        let queue_data = Box::new(
+            QueueData {
+                irq_mode,
+            },
+            flags::GFP_KERNEL,
+        )?;
+
         let disk = gen_disk::GenDiskBuilder::new()
             .capacity_sectors(4096 << 11)
             .logical_block_size(4096)?
             .physical_block_size(4096)?
             .rotational(false)
-            .build(format_args!("rnullb{}", 0), tagset, ())?;
+            .build(format_args!("rnullb{}", 0), tagset, queue_data)?;
 
         let disk = Box::pin_init(new_mutex!(disk, "nullb:disk"), flags::GFP_KERNEL)?;
 
@@ -57,9 +81,15 @@ impl kernel::Module for NullBlkModule {
 
 struct NullBlkDevice;
 
+
+struct QueueData {
+    irq_mode: IRQMode,
+}
+
+
 #[vtable]
 impl Operations for NullBlkDevice {
-    type QueueData = ();
+    type QueueData = Box<QueueData>;
     type TagSetData = ();
     type HwData = ();
     type RequestData = ();
@@ -73,21 +103,23 @@ impl Operations for NullBlkDevice {
     #[inline(always)]
     fn queue_rq(
         _hw_data: (),
-        _queue_data: (),
+        queue_data: &QueueData,
         rq: ARef<mq::Request<Self>>,
         _is_last: bool,
     ) -> Result {
-        mq::Request::end_ok(rq)
-            .map_err(|_e| kernel::error::code::EIO)
-            // We take no refcounts on the request, so we expect to be able to
-            // end the request. The request reference must be unique at this
-            // point, and so `end_ok` cannot fail.
-            .expect("Fatal error - expected to be able to end request");
+        match queue_data.irq_mode {
+            IRQMode::None => mq::Request::end_ok(rq)
+                .map_err(|_e| kernel::error::code::EIO)
+                // We take no refcounts on the request, so we expect to be able to
+                // end the request. The request reference must be unique at this
+                // point, and so `end_ok` cannot fail.
+                .expect("Fatal error - expected to be able to end request")
+        }
 
         Ok(())
     }
 
-    fn commit_rqs(_hw_data: (), _queue_data: ()) {}
+    fn commit_rqs(_hw_data: (), _queue_data: &QueueData) {}
 
     fn init_hctx(_tagset_data: (), _hctx_idx: u32) -> Result {
         Ok(())
