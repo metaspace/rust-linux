@@ -160,6 +160,13 @@ impl<T: Operations> Request<T> {
         }
     }
 
+    /// Get the target sector for the request
+    #[inline(always)]
+    pub fn sector(&self) -> usize {
+        // SAFETY: By type invariant of `Self`, `self.0` is valid and live.
+        unsafe { (*self.0.get()).__sector as usize }
+    }
+
     /// Return a pointer to the `RequestDataWrapper` stored in the private area
     /// of the request structure.
     ///
