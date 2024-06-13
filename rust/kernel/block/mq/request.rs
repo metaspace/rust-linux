@@ -7,7 +7,7 @@
 use crate::{
     bindings,
     block::mq::Operations,
-    error::Result,
+    error::{Error, Result},
     types::{ARef, AlwaysRefCounted, Opaque},
 };
 use core::{
@@ -121,6 +121,43 @@ impl<T: Operations> Request<T> {
         unsafe { bindings::blk_mq_end_request(request_ptr, bindings::BLK_STS_OK as _) };
 
         Ok(())
+    }
+
+    /// Notify the block layer that the request completed with an error.
+    ///
+    /// This function will return `Err` if `this` is not the only `ARef`
+    /// referencing the request.
+    ///
+    /// Block device drivers must call one of the `end_ok`, `end_err` or `end`
+    /// functions when they have finished processing a request. Failure to do so
+    /// can lead to deadlock.
+    pub fn end_err(this: ARef<Self>, err: Error) -> Result<(), ARef<Self>> {
+        let request_ptr = Self::try_set_end(this)?;
+
+        // SAFETY: By type invariant, `this.0` was a valid `struct request`. The
+        // success of the call to `try_set_end` guarantees that there are no
+        // `ARef`s pointing to this request. Therefore it is safe to hand it
+        // back to the block layer.
+        unsafe { bindings::blk_mq_end_request(request_ptr, err.to_blk_status()) };
+
+        Ok(())
+    }
+
+    /// Notify the block layer that the request completed with the status
+    /// indicated by `status`.
+    ///
+    /// This function will return `Err` if `this` is not the only `ARef`
+    /// referencing the request.
+    ///
+    /// Block device drivers must call one of the `end_ok`, `end_err` or `end`
+    /// functions when they have finished processing a request. Failure to do so
+    /// can lead to deadlock.
+    pub fn end(this: ARef<Self>, status: Result) -> Result<(), ARef<Self>> {
+        if let Err(e) = status {
+            Self::end_err(this, e)
+        } else {
+            Self::end_ok(this)
+        }
     }
 
     /// Return a pointer to the `RequestDataWrapper` stored in the private area
