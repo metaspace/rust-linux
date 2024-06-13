@@ -67,6 +67,12 @@ impl<T: Operations> Request<T> {
         unsafe { ARef::from_raw(NonNull::new_unchecked(ptr as *const Self as *mut Self)) }
     }
 
+    /// Get the command identifier for the request
+    pub fn command(&self) -> u32 {
+        // SAFETY: By C API contract and type invariant, `cmd_flags` is valid for read
+        unsafe { (*self.0.get()).cmd_flags & ((1 << bindings::REQ_OP_BITS) - 1) }
+    }
+
     /// Notify the block layer that a request is going to be processed now.
     ///
     /// The block layer uses this hook to do proper initializations such as
