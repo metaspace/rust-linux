@@ -131,4 +131,10 @@ impl Operations for NullBlkDevice {
     fn init_hctx(_tagset_data: (), _hctx_idx: u32) -> Result {
         Ok(())
     }
+
+    fn complete(rq: ARef<mq::Request<Self>>) {
+        mq::Request::end_ok(rq)
+            .map_err(|_e| kernel::error::code::EIO)
+            .expect("Failed to complete request")
+    }
 }
