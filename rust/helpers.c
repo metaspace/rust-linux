@@ -28,6 +28,7 @@
 #include <linux/errname.h>
 #include <linux/io.h>
 #include <linux/mutex.h>
+#include <linux/pci.h>
 #include <linux/rcupdate.h>
 #include <linux/refcount.h>
 #include <linux/sched/signal.h>
@@ -292,6 +293,23 @@ int rust_helper_devm_add_action(struct device *dev, void (*action)(void *), void
 	return devm_add_action(dev, action, data);
 }
 EXPORT_SYMBOL_GPL(rust_helper_devm_add_action);
+
+void rust_helper_pci_set_drvdata(struct pci_dev *pdev, void *data)
+{
+	pci_set_drvdata(pdev, data);
+}
+EXPORT_SYMBOL_GPL(rust_helper_pci_set_drvdata);
+
+void *rust_helper_pci_get_drvdata(struct pci_dev *pdev)
+{
+	return pci_get_drvdata(pdev);
+}
+EXPORT_SYMBOL_GPL(rust_helper_pci_get_drvdata);
+
+u64 rust_helper_pci_resource_len(struct pci_dev *pdev, int barnr)
+{
+	return pci_resource_len(pdev, barnr);
+}
 
 /*
  * `bindgen` binds the C `size_t` type as the Rust `usize` type, so we can
