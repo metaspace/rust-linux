@@ -17,6 +17,7 @@
 #include "page.c"
 #include "rbtree.c"
 #include "refcount.c"
+#include "rcu.c"
 #include "signal.c"
 #include "slab.c"
 #include "spinlock.c"
