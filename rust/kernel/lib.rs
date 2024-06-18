@@ -32,8 +32,9 @@ pub mod alloc;
 pub mod block;
 mod build_assert;
 pub mod device;
-pub mod driver;
 pub mod device_id;
+pub mod devres;
+pub mod driver;
 pub mod error;
 #[cfg(CONFIG_RUST_FW_LOADER_ABSTRACTIONS)]
 pub mod firmware;
