@@ -15,6 +15,7 @@ RUST_HELPERS := \
 	kunit \
 	mutex \
 	page \
+	pci \
 	refcount \
 	signal \
 	slab \
