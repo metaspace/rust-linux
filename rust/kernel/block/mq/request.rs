@@ -15,6 +15,7 @@ use crate::{
     sync::Arc,
     types::{ARef, AlwaysRefCounted, Opaque, ForeignOwnable},
 };
+use core::sync::atomic::AtomicBool;
 use core::{
     ffi::c_void,
     marker::PhantomData,
@@ -192,6 +193,11 @@ impl<T: Operations> Request<T> {
     ///
     /// [`blk-mq.c`]: srctree/block/blk-mq.c
     pub fn complete(this: ARef<Self>) {
+        let completed = this.wrapper_ref().completed.fetch_or(true, Ordering::Relaxed);
+        if completed {
+            return;
+        }
+
         let ptr = ARef::into_raw(this).cast::<bindings::request>().as_ptr();
         // SAFETY: By type invariant, `self.0` is a valid `struct request`
         if !unsafe { bindings::blk_mq_complete_request_remote(ptr) } {
@@ -322,6 +328,9 @@ pub(crate) struct RequestDataWrapper<T: Operations> {
     /// - 2+: There are [`ARef`] references to the request.
     refcount: AtomicU64,
 
+    /// True if `Request::complete` was called
+    completed: AtomicBool,
+
     /// Driver managed request data
     data: T::RequestData,
 }
@@ -331,6 +340,12 @@ impl<T: Operations> RequestDataWrapper<T> {
     /// `self`.
     pub(crate) fn refcount(&self) -> &AtomicU64 {
         &self.refcount
+    }
+
+    /// Return a reference to a boolean, indicating whether this request was
+    /// completed.
+    pub(crate) fn completed(&self) -> &AtomicBool {
+        &self.completed
     }
 
     /// Return a pointer to the refcount of the request that is embedding the
@@ -343,6 +358,18 @@ impl<T: Operations> RequestDataWrapper<T> {
         // SAFETY: Because of the safety requirements of this function, the
         // field projection is safe.
         unsafe { addr_of_mut!((*this).refcount) }
+    }
+
+    /// Return a pointer to the `completed` field of the request that is
+    /// embedding the pointee of `this`.
+    ///
+    /// # Safety
+    ///
+    /// - `this` must point to a live allocation of at least the size of `Self`.
+    pub(crate) unsafe fn completed_ptr(this: *mut Self) -> *mut AtomicBool {
+        // SAFETY: Because of the safety requirements of this function, the
+        // field projection is safe.
+        unsafe { addr_of_mut!((*this).completed) }
     }
 
     /// Return a pointer to the `data` field of the `Self` pointed to by `this`.
