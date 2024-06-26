@@ -12,7 +12,7 @@ use crate::{
     init::PinInit,
     types::{ARef, ForeignOwnable},
 };
-use core::{marker::PhantomData, sync::atomic::AtomicU64, sync::atomic::Ordering};
+use core::{marker::PhantomData, sync::atomic::{AtomicBool, AtomicU64, Ordering}};
 
 use super::TagSet;
 
@@ -129,6 +129,9 @@ impl<T: Operations> OperationsVTable<T> {
 
         // One refcount for the ARef, one for being in flight
         request.wrapper_ref().refcount().store(2, Ordering::Relaxed);
+
+        // The request is not completed yet.
+        request.wrapper_ref().completed().store(false, Ordering::Relaxed);
 
         // SAFETY:
         //  - We own a refcount that we took above. We pass that to `ARef`.
@@ -304,6 +307,10 @@ impl<T: Operations> OperationsVTable<T> {
             // SAFETY: The refcount field is allocated but not initialized, so
             // it is valid for writes.
             unsafe { RequestDataWrapper::refcount_ptr(pdu.as_ptr()).write(AtomicU64::new(0)) };
+
+            // SAFETY: The `completed` field is allocated but not initialized,
+            // so it is valid for writes.
+            unsafe { RequestDataWrapper::completed_ptr(pdu.as_ptr()).write(AtomicBool::new(false)) };
 
             // SAFETY: Because `set` is a `TagSet<T>`, `driver_data` comes from
             // a call to `into_foregn` by the initializer returned by
