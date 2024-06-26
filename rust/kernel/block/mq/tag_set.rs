@@ -14,7 +14,7 @@ use crate::{
     try_pin_init,
     types::{ARef, ForeignOwnable, Opaque},
 };
-use core::{convert::TryInto, marker::PhantomData, ptr::NonNull};
+use core::{convert::TryInto, marker::PhantomData};
 use core::sync::atomic::Ordering;
 use macros::{pin_data, pinned_drop};
 
