@@ -39,6 +39,7 @@ pub mod ioctl;
 #[cfg(CONFIG_KUNIT)]
 pub mod kunit;
 pub mod list;
+pub mod module_param;
 #[cfg(CONFIG_NET)]
 pub mod net;
 pub mod page;
