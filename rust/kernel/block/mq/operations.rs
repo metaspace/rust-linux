@@ -304,6 +304,8 @@ impl<T: Operations> OperationsVTable<T> {
             // to a valid allocation.
             let pdu = unsafe { Request::wrapper_ptr(rq.cast::<Request<T>>()) };
 
+            // TODO: Perhaps just pin_init `RequestDataWrapper`?
+
             // SAFETY: The refcount field is allocated but not initialized, so
             // it is valid for writes.
             unsafe { RequestDataWrapper::refcount_ptr(pdu.as_ptr()).write(AtomicU64::new(0)) };
