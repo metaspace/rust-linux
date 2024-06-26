@@ -6,7 +6,6 @@
 
 use kernel::hrtimer::RawTimer;
 
-use crate::prelude::*;
 use crate::{
     bindings,
     block::mq::Operations,
