@@ -105,7 +105,7 @@
 //!
 //! C header: [`include/linux/hrtimer.h`](srctree/include/linux/hrtimer.h)
 
-use core::{marker::PhantomData, pin::Pin};
+use core::{marker::PhantomData, pin::Pin, ptr::{self, NonNull}};
 
 use crate::{init::PinInit, prelude::*, sync::Arc, types::Opaque};
 
@@ -168,6 +168,33 @@ impl<T: TimerCallback> Timer<T> {
         // allocation of at least the size of `Self`.
         unsafe { Opaque::raw_get(core::ptr::addr_of!((*ptr).timer)) }
     }
+
+    /// Cancel a timer and wait for its callback to finish executing
+    ///
+    /// Returns `true` if the timer was active.
+    pub fn cancel(&self) -> bool
+    where
+        T: HasTimer<T>,
+        <T as TimerCallback>::Receiver: TimerCallback,
+    {
+        let timer_ptr = self.timer.get();
+
+        // SAFETY: By struct invariant `self.timer` was initialized by `hrtimer_init` so by C API
+        // contract it is safe to call `hrtimer_cancel`.
+        let cancelled = unsafe { bindings::hrtimer_cancel(timer_ptr) != 0 };
+
+        // If the callback cancelled before execution, cleanup its resources
+        if cancelled {
+            // SAFETY: `timer` is valid for as long as our interface is exposed
+            let data_ptr =
+                unsafe { NonNull::new_unchecked(T::timer_container_of(timer_ptr.cast())) };
+
+            // SAFETY: We're in the `hrtimer` crate
+            unsafe { <T::Receiver as TimerPointer>::cleanup(data_ptr) };
+        }
+
+        cancelled
+    }
 }
 
 #[pinned_drop]
@@ -208,6 +235,16 @@ pub trait TimerPointer: Sync {
     ///
     /// Only to be called by C code in `hrtimer` subsystem.
     unsafe extern "C" fn run(ptr: *mut bindings::hrtimer) -> bindings::hrtimer_restart;
+
+    /// Cleanup resources for the timer if it was cancelled before executing
+    ///
+    /// # Safety
+    ///
+    /// This should only be called by the [`kernel::hrtimer`] crate
+    unsafe fn cleanup<T>(data: ptr::NonNull<T>)
+    where
+        Self: Sized + TimerCallback,
+        T: TimerCallback<Receiver = Self>;
 }
 
 /// Implemented by structs that contain timer nodes.
@@ -304,6 +341,15 @@ where
                 bindings::hrtimer_mode_HRTIMER_MODE_REL,
             )
         };
+    }
+
+    unsafe fn cleanup<D>(data: ptr::NonNull<D>)
+    where
+        Self: Sized + TimerCallback,
+        D: TimerCallback<Receiver = Self>,
+    {
+        // SAFETY: The caller guarantees that `self` points to a valid instance of `Arc<T>`
+        drop(unsafe { Arc::from_raw(data.as_ptr()) })
     }
 
     unsafe extern "C" fn run(ptr: *mut bindings::hrtimer) -> bindings::hrtimer_restart {
