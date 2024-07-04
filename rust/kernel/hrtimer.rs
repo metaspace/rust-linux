@@ -195,6 +195,15 @@ impl<T: TimerCallback> Timer<T> {
 
         cancelled
     }
+
+    /// Return the current time from the base timer for this timer
+    pub fn get_time(&self) -> Ktime {
+        // SAFETY: By struct invariant `self.timer` was initialized by `hrtimer_init` so by C API
+        // contract:
+        // * `base` is safe to dereference
+        // * `get_time` must already be initialized with a valid pointer
+        Ktime::from_raw(unsafe { ((*(*self.timer.get()).base).get_time.unwrap_unchecked())() })
+    }
 }
 
 #[pinned_drop]
