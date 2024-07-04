@@ -296,7 +296,37 @@ pub trait TimerCallback {
     type Receiver: TimerPointer;
 
     /// Called by the timer logic when the timer fires.
-    fn run(this: Self::Receiver);
+    fn run(this: Self::Receiver, context: TimerCallbackContext<'_, Self>);
+}
+
+/// Privileged smart-pointer for timer methods which are only safe to call within a [`Timer`]
+/// callback
+pub struct TimerCallbackContext<'a, T: TimerCallback>(&'a Timer<T>);
+
+impl<'a, T: TimerCallback> TimerCallbackContext<'a, T> {
+    /// Create a new [`TimerCallbackContext`]
+    ///
+    /// # Safety
+    ///
+    /// This function relies on the caller being within the context of a timer callback, so it must
+    /// not be used anywhere except for within implementations of [`RawTimerCallback::run`]. The
+    /// caller promises that `timer` points to a valid initialized instance of [`bindings::hrtimer`]
+    pub(crate) unsafe fn from_raw(timer: *mut bindings::hrtimer) -> Self {
+        // SAFETY:
+        // * The caller guarantees `timer` is a valid pointer to an initialized `bindings::hrtimer`
+        // * The data layout is identical through #[repr(transparent)]
+        Self(unsafe { &*timer.cast() })
+    }
+
+    /// Forward the timer expiry so it will expire in the future
+    ///
+    /// Note that this does not requeue the timer, it simply updates its expiry value. It returns
+    /// the number of overruns that have occurred as a result of the expiry change.
+    pub fn forward(&self, now: Ktime, interval: Ktime) -> u64 {
+        // SAFETY: We point to a valid hrtimer instance, and our interface is proof that this
+        // function is being called from within the timer's own callback
+        unsafe { bindings::hrtimer_forward(self.0.timer.get(), now.to_ns(), interval.to_ns()) }
+    }
 }
 
 impl<T> TimerPointer for Arc<T>
@@ -355,7 +385,11 @@ where
     unsafe extern "C" fn run(ptr: *mut bindings::hrtimer) -> bindings::hrtimer_restart {
         // SAFETY: We leaked the `Arc` when we enqueued the timer.
         let receiver = unsafe { arc_receiver(ptr) };
-        T::run(receiver);
+
+        // SAFETY:
+        // * We already verified that `timer_ptr` points to an initialized `Timer`
+        // * This is being called from the context of a timer callback
+        T::run(receiver, unsafe { TimerCallbackContext::from_raw(timer_ptr.cast()) });
 
         bindings::hrtimer_restart_HRTIMER_NORESTART
     }
