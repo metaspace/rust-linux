@@ -11,7 +11,8 @@
 //!
 //! ```rust
 //! use kernel::{
-//!     sync::Arc, hrtimer::{Timer, TimerCallback, TimerPointer},
+//!     alloc::flags,
+//!     sync::Arc, hrtimer::{Timer, TimerCallback, TimerPointer, TimerCallbackContext},
 //!     impl_has_timer, prelude::*, stack_pin_init
 //! };
 //! use core::sync::atomic::AtomicBool;
@@ -37,7 +38,7 @@
 //! impl TimerCallback for IntrusiveTimer {
 //!     type Receiver = Arc<IntrusiveTimer>;
 //!
-//!     fn run(this: Self::Receiver) {
+//!     fn run(this: Self::Receiver, _ctx: TimerCallbackContext<'_, Self>) {
 //!         pr_info!("Timer called\n");
 //!         this.flag.store(true, Ordering::Relaxed);
 //!     }
@@ -62,7 +63,7 @@
 //!
 //! ```rust
 //! use kernel::{
-//!     sync::Arc, hrtimer::{ Timer, TimerCallback, TimerPointer },
+//!     sync::Arc, hrtimer::{ Timer, TimerCallback, TimerCallbackContext, TimerPointer },
 //!     impl_has_timer, prelude::*, stack_pin_init
 //! };
 //! use core::sync::atomic::{ AtomicBool, Ordering };
@@ -89,7 +90,7 @@
 //! impl<U: Send + Sync, T: AsRef<U> + Send + Sync> TimerCallback for IntrusiveTimer<U, T> {
 //!     type Receiver = Arc<IntrusiveTimer<U,T>>;
 //!
-//!     fn run(this: Self::Receiver) {
+//!     fn run(this: Self::Receiver, _ctx: TimerCallbackContext<'_, Self>) {
 //!         pr_info!("Timer called\n");
 //!         this.flag.store(true, Ordering::Relaxed);
 //!     }
@@ -305,7 +306,9 @@ pub trait TimerCallback {
     type Receiver: TimerPointer;
 
     /// Called by the timer logic when the timer fires.
-    fn run(this: Self::Receiver, context: TimerCallbackContext<'_, Self>);
+    fn run(this: Self::Receiver, context: TimerCallbackContext<'_, Self>)
+    where
+        Self: Sized;
 }
 
 /// Privileged smart-pointer for timer methods which are only safe to call within a [`Timer`]
@@ -318,7 +321,7 @@ impl<'a, T: TimerCallback> TimerCallbackContext<'a, T> {
     /// # Safety
     ///
     /// This function relies on the caller being within the context of a timer callback, so it must
-    /// not be used anywhere except for within implementations of [`RawTimerCallback::run`]. The
+    /// not be used anywhere except for within implementations of [`TimerCallback::run`]. The
     /// caller promises that `timer` points to a valid initialized instance of [`bindings::hrtimer`]
     pub(crate) unsafe fn from_raw(timer: *mut bindings::hrtimer) -> Self {
         // SAFETY:
@@ -335,6 +338,14 @@ impl<'a, T: TimerCallback> TimerCallbackContext<'a, T> {
         // SAFETY: We point to a valid hrtimer instance, and our interface is proof that this
         // function is being called from within the timer's own callback
         unsafe { bindings::hrtimer_forward(self.0.timer.get(), now.to_ns(), interval.to_ns()) }
+    }
+
+    /// Forward the time expiry so it expires after now
+    ///
+    /// This is a variant of [`TimerCallbackContext::forward()`] that uses an interval after the
+    /// current time of the hrtimer clockbase.
+    pub fn forward_now(&self, interval: Ktime) -> u64 {
+        self.forward(self.0.get_time(), interval)
     }
 }
 
@@ -392,13 +403,17 @@ where
     }
 
     unsafe extern "C" fn run(ptr: *mut bindings::hrtimer) -> bindings::hrtimer_restart {
+        // `Timer` is `repr(transparent)`
+        let timer_ptr = ptr.cast::<kernel::hrtimer::Timer<T>>();
         // SAFETY: We leaked the `Arc` when we enqueued the timer.
         let receiver = unsafe { arc_receiver(ptr) };
 
         // SAFETY:
         // * We already verified that `timer_ptr` points to an initialized `Timer`
         // * This is being called from the context of a timer callback
-        T::run(receiver, unsafe { TimerCallbackContext::from_raw(timer_ptr.cast()) });
+        T::run(receiver, unsafe {
+            TimerCallbackContext::from_raw(timer_ptr.cast())
+        });
 
         bindings::hrtimer_restart_HRTIMER_NORESTART
     }
