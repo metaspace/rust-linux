@@ -108,7 +108,7 @@
 
 use core::{marker::PhantomData, pin::Pin, ptr::{self, NonNull}};
 
-use crate::{init::PinInit, prelude::*, sync::Arc, types::Opaque};
+use crate::{init::PinInit, prelude::*, sync::Arc, types::Opaque, time::Ktime};
 
 /// A timer backed by a C `struct hrtimer`.
 ///
@@ -204,6 +204,16 @@ impl<T: TimerCallback> Timer<T> {
         // * `base` is safe to dereference
         // * `get_time` must already be initialized with a valid pointer
         Ktime::from_raw(unsafe { ((*(*self.timer.get()).base).get_time.unwrap_unchecked())() })
+    }
+
+    /// Return the time expiry for this timer
+    ///
+    /// Note that this should only be used as a snapshot, as the actual expiry time could change
+    /// after this function is called
+    pub fn expires(&self) -> Ktime {
+        // SAFETY: There is no locking involved here, just do a volatile read to make sure we have
+        // the most up to date value
+        Ktime::from_ns(unsafe { ptr::read_volatile(&(*self.timer.get()).node.expires) })
     }
 }
 
