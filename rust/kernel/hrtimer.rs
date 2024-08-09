@@ -21,6 +21,7 @@
 //! struct IntrusiveTimer {
 //!     #[pin]
 //!     timer: Timer<Self>,
+//!     // TODO: Change to CondVar
 //!     flag: AtomicBool,
 //! }
 //!
@@ -192,7 +193,7 @@ impl<T> PinnedDrop for Timer<T> {
 /// has a field of type `Timer`.
 ///
 /// Target must be [`Sync`] because timer callbacks happen in another thread of
-/// execution.
+/// execution (hard or soft interrupt context).
 ///
 /// [`Box<T>`]: Box
 /// [`Arc<T>`]: Arc
