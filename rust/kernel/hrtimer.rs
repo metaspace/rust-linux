@@ -307,7 +307,7 @@ where
 
     unsafe extern "C" fn run(ptr: *mut bindings::hrtimer) -> bindings::hrtimer_restart {
         // SAFETY: We leaked the `Arc` when we enqueued the timer.
-        let receiver = unsafe { arc_receiver(ptr)};
+        let receiver = unsafe { arc_receiver(ptr) };
         T::run(receiver);
 
         bindings::hrtimer_restart_HRTIMER_NORESTART
