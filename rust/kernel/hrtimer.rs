@@ -48,7 +48,7 @@
 //!     impl HasTimer<Self> for IntrusiveTimer { self.timer }
 //! }
 //!
-//! let has_timer = Arc::pin_init(IntrusiveTimer::new())?;
+//! let has_timer = Arc::pin_init(IntrusiveTimer::new(), flags::GFP_KERNEL)?;
 //! has_timer.clone().schedule(200_000_000);
 //! while !has_timer.flag.load(Ordering::Relaxed) { core::hint::spin_loop() }
 //!
