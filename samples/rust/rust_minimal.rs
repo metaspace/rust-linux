@@ -30,7 +30,6 @@ impl kernel::Module for RustMinimal {
             use core::sync::atomic::AtomicBool;
             use core::sync::atomic::Ordering;
             use kernel::{
-                alloc::flags,
                 hrtimer::{Timer, TimerCallback, TimerCallbackContext, TimerPointer},
                 impl_has_timer,
                 prelude::*,

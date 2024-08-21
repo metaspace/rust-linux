@@ -5,12 +5,14 @@
 //! Allows scheduling timer callbacks without doing allocations at the time of
 //! scheduling. For now, only one timer per type is allowed.
 //!
+//! # TODO
+//!
+//! - Handle repeated `schedule` and multiple handles
+//! - Update documentation
+//! - Update safety comments
+//!
 
-use core::{
-    marker::PhantomData,
-    pin::Pin,
-    ptr::{self, NonNull},
-};
+use core::{marker::PhantomData, ptr};
 
 use crate::{init::PinInit, prelude::*, sync::Arc, time::Ktime, types::Opaque};
 
@@ -46,9 +48,6 @@ impl<U> Timer<U> {
         // allocation of at least the size of `Self`.
         unsafe { Opaque::raw_get(core::ptr::addr_of!((*ptr).timer)) }
     }
-}
-
-impl<U> Timer<U> {
 
     /// Return the current time from the base timer for this timer
     pub fn get_time(&self) -> Ktime {
@@ -59,11 +58,27 @@ impl<U> Timer<U> {
         Ktime::from_raw(unsafe { ((*(*self.timer.get()).base).get_time.unwrap_unchecked())() })
     }
 
+    /// Return the time expiry for this timer
+    ///
+    /// Note that this should only be used as a snapshot, as the actual expiry time could change
+    /// after this function is called
+    pub fn expires(&self) -> Ktime {
+        // SAFETY: There is no locking involved here, just do a volatile read to make sure we have
+        // the most up to date value
+        Ktime::from_ns(unsafe { ptr::read_volatile(&(*self.timer.get()).node.expires) })
+    }
+
+    unsafe fn cancel(self_ptr: *const Self) -> bool {
+        // SAFETY: timer_ptr points to an allocation of at least `Timer` size.
+        let c_timer_ptr = unsafe { Timer::raw_get(self_ptr) };
+
+        // If handler is running, this will wait for handler to finish before returning
+        unsafe { bindings::hrtimer_cancel(c_timer_ptr) != 0 }
+    }
 }
 
 impl<U> Timer<U>
 where
-    //T: TimerPointer<T, U>,
     U: TimerCallback,
     U: HasTimer<U>,
 {
@@ -93,16 +108,6 @@ where
             _t: PhantomData,
         })
     }
-
-    /// Return the time expiry for this timer
-    ///
-    /// Note that this should only be used as a snapshot, as the actual expiry time could change
-    /// after this function is called
-    pub fn expires(&self) -> Ktime {
-        // SAFETY: There is no locking involved here, just do a volatile read to make sure we have
-        // the most up to date value
-        Ktime::from_ns(unsafe { ptr::read_volatile(&(*self.timer.get()).node.expires) })
-    }
 }
 
 /// Implemented by pointer types to structs that embed a [`Timer`]. This trait
@@ -118,14 +123,25 @@ where
 /// Target must be [`Sync`] because timer callbacks happen in another thread of
 /// execution (hard or soft interrupt context).
 ///
+/// # Safety
+///
+/// Implementers of this trait must ensure that the timer represented by
+/// `TimerHandle` is canceled before the pointee is dropped.
+///
 /// [`Box<T>`]: Box
 /// [`Arc<T>`]: Arc
 /// [`ARef<T>`]: crate::types::ARef
-pub trait TimerPointer<U>: Sync + Sized
+pub unsafe trait TimerPointer<U>: Sync + Sized
 where
-    //U: HasTimer<Self, U>,
     U: TimerCallback,
 {
+    /// A handle representing a scheduled timer.
+    ///
+    /// # Safety
+    ///
+    /// If the timer is armed when the
+    /// handle is dropped, the drop method of `TimerHandle` must not return
+    /// before the timer is unarmed.
     type TimerHandle;
 
     /// Schedule the timer after `expires` time units
@@ -193,15 +209,8 @@ pub trait TimerCallback {
 /// Privileged smart-pointer for timer methods which are only safe to call within a [`Timer`]
 /// callback
 pub struct TimerCallbackContext<'a, U>(&'a Timer<U>);
-//where
-//    U: TimerCallback;
 
-impl<'a, U> TimerCallbackContext<'a, U>
-//where
-    //T: TimerPointer<T,U>,
-    //U: TimerCallback,
-    //U: HasTimer<T,U>,
-{
+impl<'a, U> TimerCallbackContext<'a, U> {
     /// Create a new [`TimerCallbackContext`]
     ///
     /// # Safety
@@ -246,9 +255,10 @@ impl<U> ArcTimerHandle<U>
 where
     U: HasTimer<U>,
 {
-    fn cancel(self) {
-        // TODO: It should be ok to cancel without dropping the handle?
-        // t.timer.cancel()
+    fn cancel(&mut self) -> bool {
+        let timer_ptr = unsafe { <U as HasTimer<U>>::raw_get_timer(self.inner.as_ptr()) };
+
+        unsafe { Timer::<U>::cancel(timer_ptr) }
     }
 }
 
@@ -257,19 +267,11 @@ where
     U: HasTimer<U>,
 {
     fn drop(&mut self) {
-        let timer_ptr = unsafe { <U as HasTimer<U>>::raw_get_timer(self.inner.as_ptr()) };
-
-        // TODO: Move the rest to `Timer`
-
-        // SAFETY: timer_ptr points to an allocation of at least `Timer` size.
-        let c_timer_ptr = unsafe { Timer::raw_get(timer_ptr) };
-
-        // If handler is running, this will wait for handler to finish before returning
-        let _cancelled = unsafe { bindings::hrtimer_cancel(c_timer_ptr) != 0 };
+        self.cancel();
     }
 }
 
-impl<U> TimerPointer<U> for Arc<U>
+unsafe impl<U> TimerPointer<U> for Arc<U>
 where
     U: Send + Sync,
     U: HasTimer<U>,
@@ -310,9 +312,7 @@ where
             )
         };
 
-        ArcTimerHandle {
-            inner: self,
-        }
+        ArcTimerHandle { inner: self }
     }
 
     unsafe extern "C" fn run(ptr: *mut bindings::hrtimer) -> bindings::hrtimer_restart {
