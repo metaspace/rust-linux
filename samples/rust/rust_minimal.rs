@@ -41,7 +41,7 @@ impl kernel::Module for RustMinimal {
             #[pin_data]
             struct IntrusiveTimer {
                 #[pin]
-                timer: Timer<Arc<Self>,Self>,
+                timer: Timer<Self>,
                 // TODO: Change to CondVar
                 flag: AtomicBool,
             }
@@ -57,14 +57,14 @@ impl kernel::Module for RustMinimal {
 
             impl TimerCallback for IntrusiveTimer {
 
-                fn run<T>(&self, _ctx: TimerCallbackContext<'_, T, Self>) {
+                fn run(&self, _ctx: TimerCallbackContext<'_, Self>) {
                     pr_info!("Timer called\n");
                     self.flag.store(true, Ordering::Relaxed);
                 }
             }
 
             impl_has_timer! {
-                impl HasTimer<Arc<IntrusiveTimer>, Self> for IntrusiveTimer { self.timer }
+                impl HasTimer<Self> for IntrusiveTimer { self.timer }
             }
 
             let has_timer = Arc::pin_init(IntrusiveTimer::new(), GFP_KERNEL)?;
