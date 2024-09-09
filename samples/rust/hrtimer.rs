@@ -8,6 +8,7 @@ use kernel::{
     hrtimer::{Timer, TimerCallback, TimerCallbackContext, TimerPointer, TimerRestart},
     impl_has_timer,
     prelude::*,
+    sync::Arc,
 };
 
 module! {
@@ -25,14 +26,14 @@ struct IntrusiveTimer {
     #[pin]
     timer: Timer<Self>,
     // TODO: Change to CondVar
-    flag: AtomicBool,
+    flag: Arc<AtomicBool>,
 }
 
 impl IntrusiveTimer {
-    fn new() -> impl PinInit<Self> {
-        pin_init!(Self {
+    fn new() -> impl PinInit<Self, kernel::error::Error> {
+        try_pin_init!(Self {
             timer <- Timer::new(),
-            flag: AtomicBool::new(false),
+            flag: Arc::new(AtomicBool::new(false), kernel::alloc::flags::GFP_KERNEL)?,
         })
     }
 }
@@ -50,14 +51,15 @@ impl_has_timer! {
 }
 
 fn stack_timer() -> Result<()> {
-    use kernel::stack_pin_init;
+    use kernel::stack_try_pin_init;
 
     pr_info!("Timer on the stack\n");
 
-    stack_pin_init!( let has_timer = IntrusiveTimer::new() );
+    stack_try_pin_init!( let has_timer =? IntrusiveTimer::new() );
+    let flag_handle = has_timer.flag.clone();
     let _handle = has_timer.as_mut().schedule(200_000_000);
 
-    while !has_timer.flag.load(Ordering::Relaxed) {
+    while !flag_handle.load(Ordering::Relaxed) {
         core::hint::spin_loop()
     }
 
@@ -66,7 +68,6 @@ fn stack_timer() -> Result<()> {
 }
 fn arc_timer() -> Result<()> {
     pr_info!("Timer on the heap in Arc\n");
-    use kernel::sync::Arc;
 
     let has_timer = Arc::pin_init(IntrusiveTimer::new(), GFP_KERNEL)?;
     let _handle = has_timer.clone().schedule(200_000_000);

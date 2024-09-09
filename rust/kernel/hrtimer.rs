@@ -406,7 +406,18 @@ where
     U: HasTimer<U>,
 {
     fn cancel(&mut self) -> bool {
-        todo!()
+        let timer_ptr = unsafe { <U as HasTimer<U>>::raw_get_timer(unsafe {self.inner.as_mut().get_unchecked_mut() as *mut _}) };
+
+        unsafe { Timer::<U>::cancel(timer_ptr) }
+    }
+}
+
+impl<'a, U> Drop for PinTimerHandle<'a, U>
+where
+    U: HasTimer<U>,
+{
+    fn drop(&mut self) {
+        self.cancel();
     }
 }
 
