@@ -142,7 +142,7 @@ where
     /// If the timer is armed when the
     /// handle is dropped, the drop method of `TimerHandle` must not return
     /// before the timer is unarmed.
-    type TimerHandle;
+    type TimerHandle: TimerHandle;
 
     /// Schedule the timer after `expires` time units
     fn schedule(self, expires: u64) -> Self::TimerHandle;
@@ -153,6 +153,10 @@ where
     ///
     /// Only to be called by C code in `hrtimer` subsystem.
     unsafe extern "C" fn run(ptr: *mut bindings::hrtimer) -> bindings::hrtimer_restart;
+}
+
+pub trait TimerHandle {
+    fn cancel(&mut self) -> bool;
 }
 
 /// Implemented by structs that contain timer nodes.
@@ -274,7 +278,7 @@ where
     inner: Arc<U>,
 }
 
-impl<U> ArcTimerHandle<U>
+impl<U> TimerHandle for ArcTimerHandle<U>
 where
     U: HasTimer<U>,
 {
