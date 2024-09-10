@@ -12,6 +12,13 @@
 //! - Update safety comments
 //!
 
+// TODO: hrtimer_nanosleep
+// TODO: schedule_hrtimeout_range
+// TODO: schedule_hrtimeout_range_clock
+// TODO: schedule_hrtimeout
+// TODO: sleeper API -> task related?
+// TODO: timer modes ABS/REL/HARD/SOFT
+
 use core::{marker::PhantomData, ptr};
 
 use crate::{init::PinInit, prelude::*, sync::Arc, time::Ktime, types::Opaque};
@@ -68,6 +75,7 @@ impl<U> Timer<U> {
         Ktime::from_ns(unsafe { ptr::read_volatile(&(*self.timer.get()).node.expires) })
     }
 
+    /// Do not call this, cancel through timer handle instead.
     unsafe fn cancel(self_ptr: *const Self) -> bool {
         // SAFETY: timer_ptr points to an allocation of at least `Timer` size.
         let c_timer_ptr = unsafe { Timer::raw_get(self_ptr) };
@@ -75,6 +83,13 @@ impl<U> Timer<U> {
         // If handler is running, this will wait for handler to finish before returning
         unsafe { bindings::hrtimer_cancel(c_timer_ptr) != 0 }
     }
+
+    // TODO: try_cancel
+    // TODO: get_remaining
+    // TODO: active
+    // TODO: queued
+    // TODO: callback_running
+    // TODO: hrtimer_forward outside of callback context
 }
 
 impl<U> Timer<U>
