@@ -198,10 +198,33 @@ pub unsafe trait HasTimer<U> {
     }
 }
 
+pub enum TimerRestart {
+    NoRestart,
+    Restart,
+}
+
+impl From<u32> for TimerRestart {
+    fn from(value: bindings::hrtimer_restart) -> Self {
+        match value {
+            0 => Self::NoRestart,
+            _ => Self::Restart,
+        }
+    }
+}
+
+impl From<TimerRestart> for bindings::hrtimer_restart {
+    fn from(value: TimerRestart) -> Self {
+        match value {
+            TimerRestart::NoRestart => bindings::hrtimer_restart_HRTIMER_NORESTART,
+            TimerRestart::Restart => bindings::hrtimer_restart_HRTIMER_RESTART,
+        }
+    }
+}
+
 /// Implemented by structs that can the target of a timer callback
 pub trait TimerCallback {
     /// Called by the timer logic when the timer fires.
-    fn run(&self, context: TimerCallbackContext<'_, Self>)
+    fn run(&self, context: TimerCallbackContext<'_, Self>) -> TimerRestart
     where
         Self: Sized;
 }
@@ -326,9 +349,8 @@ where
         // * This is being called from the context of a timer callback
         U::run(receiver, unsafe {
             TimerCallbackContext::<U>::from_raw(timer_ptr.cast())
-        });
-
-        bindings::hrtimer_restart_HRTIMER_NORESTART
+        })
+        .into()
     }
 }
 
