@@ -394,6 +394,77 @@ where
     unsafe { &*data_ptr }
 }
 
+pub struct PinTimerHandle<'a, U>
+where
+    U: HasTimer<U>,
+{
+    inner: Pin<&'a mut U>,
+}
+
+impl<'a, U> TimerHandle for PinTimerHandle<'a, U>
+where
+    U: HasTimer<U>,
+{
+    fn cancel(&mut self) -> bool {
+        todo!()
+    }
+}
+
+unsafe impl<'a, U> TimerPointer<U> for Pin<&'a mut U>
+where
+    U: Send + Sync,
+    U: HasTimer<U>,
+    U: TimerCallback,
+{
+    type TimerHandle = PinTimerHandle<'a, U>;
+
+    fn schedule(self, expires: u64) -> Self::TimerHandle {
+        // SAFETY: We are not moving out of `unpinned` and we are not handing
+        // out mutable references to it.
+        let unpinned = unsafe {Pin::into_inner_unchecked(self) };
+
+        // Cast to pointer
+        let self_ptr = unpinned as *mut U;
+
+        // Get a pointer to the timer struct
+        let timer_ptr = unsafe { U::raw_get_timer(self_ptr) };
+
+        // `Timer` is `repr(transparent)`
+        let c_timer_ptr = timer_ptr as *mut bindings::hrtimer;
+
+        // SAFETY: `place` is pointing to a live allocation, so the deref
+        // is safe. The `function` field might not be initialized, but
+        // `addr_of_mut` does not create a reference to the field.
+        let function: *mut Option<_> = unsafe { core::ptr::addr_of_mut!((*c_timer_ptr).function) };
+
+        // SAFETY: `function` points to a valid allocation.
+        unsafe { core::ptr::write(function, Some(Self::run)) };
+
+        // Schedule the timer - if it is already scheduled it is removed and inserted
+        unsafe {
+            bindings::hrtimer_start_range_ns(
+                c_timer_ptr,
+                expires as i64,
+                0,
+                bindings::hrtimer_mode_HRTIMER_MODE_REL,
+            );
+        }
+
+        PinTimerHandle { inner: unsafe {Pin::new_unchecked(unpinned)} }
+    }
+
+    unsafe extern "C" fn run(ptr: *mut bindings::hrtimer) -> bindings::hrtimer_restart {
+        // `Timer` is `repr(transparent)`
+        let timer_ptr = ptr as *mut Timer<U>;
+        let receiver_ptr = unsafe { U::timer_container_of(timer_ptr) };
+        let receiver_ref = unsafe { &mut *receiver_ptr };
+        let receiver_pin = unsafe { Pin::new_unchecked(receiver_ref) };
+        U::run(&receiver_pin, unsafe {
+            TimerCallbackContext::<U>::from_raw(timer_ptr.cast())
+        }).into()
+    }
+}
+
 /// Use to implement the [`HasTimer<T>`] trait.
 ///
 /// See [`module`] documentation for an example.
