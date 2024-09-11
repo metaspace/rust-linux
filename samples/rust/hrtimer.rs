@@ -29,10 +29,14 @@ struct IntrusiveTimer {
     flag: Arc<AtomicBool>,
 }
 
-impl IntrusiveTimer {
-    fn new() -> impl PinInit<Self, kernel::error::Error> {
+impl IntrusiveTimer
+{
+    fn new<T>() -> impl PinInit<Self, kernel::error::Error>
+    where
+        T: TimerPointer<Self>
+    {
         try_pin_init!(Self {
-            timer <- Timer::new(),
+            timer <- Timer::new::<T>(),
             flag: Arc::new(AtomicBool::new(false), kernel::alloc::flags::GFP_KERNEL)?,
         })
     }
@@ -55,7 +59,7 @@ fn stack_timer() -> Result<()> {
 
     pr_info!("Timer on the stack\n");
 
-    stack_try_pin_init!( let has_timer =? IntrusiveTimer::new() );
+    stack_try_pin_init!( let has_timer =? IntrusiveTimer::new::<Pin<&mut IntrusiveTimer>>() );
     let flag_handle = has_timer.flag.clone();
     let _handle = has_timer.as_mut().schedule(200_000_000);
 
@@ -66,10 +70,12 @@ fn stack_timer() -> Result<()> {
     pr_info!("Flag raised\n");
     Ok(())
 }
+
+#[cfg(disable)]
 fn arc_timer() -> Result<()> {
     pr_info!("Timer on the heap in Arc\n");
 
-    let has_timer = Arc::pin_init(IntrusiveTimer::new(), GFP_KERNEL)?;
+    let has_timer = Arc::pin_init(IntrusiveTimer::new::<Arc<IntrusiveTimer>>(), GFP_KERNEL)?;
     let _handle = has_timer.clone().schedule(200_000_000);
     while !has_timer.flag.load(Ordering::Relaxed) {
         core::hint::spin_loop()
@@ -85,6 +91,8 @@ impl kernel::Module for RustMinimal {
         pr_info!("Am I built-in? {}\n", !cfg!(MODULE));
 
         stack_timer()?;
+
+        #[cfg(disable)]
         arc_timer()?;
 
         Ok(RustMinimal {})

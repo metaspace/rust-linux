@@ -7,9 +7,10 @@
 //!
 //! # TODO
 //!
-//! - Handle repeated `schedule` and multiple handles
+//! - Handle repeated `schedule` and multiple handles ( for pointers that are `Clone/Copy`)
 //! - Update documentation
 //! - Update safety comments
+//! - Properly credit Lyude for contributions
 //!
 
 // TODO: hrtimer_nanosleep
@@ -18,6 +19,9 @@
 // TODO: schedule_hrtimeout
 // TODO: sleeper API -> task related?
 // TODO: timer modes ABS/REL/HARD/SOFT
+// TODO: Add cancel example
+// TODO: Add non mut pin example
+// TODO: Access target through handle
 
 use core::{marker::PhantomData, ptr};
 
@@ -36,14 +40,48 @@ pub struct Timer<U> {
     _t: PhantomData<U>,
 }
 
-// SAFETY: A `Timer` can be moved to other threads and used from there.
+// SAFETY: A `Timer` can be moved to other threads and used/dropped from there.
 unsafe impl<U> Send for Timer<U> {}
 
 // SAFETY: Timer operations are locked on C side, so it is safe to operate on a
 // timer from multiple threads
 unsafe impl<U> Sync for Timer<U> {}
 
+type RawTimerCallback = unsafe extern "C" fn(*mut bindings::hrtimer) -> bindings::hrtimer_restart;
+
 impl<U> Timer<U> {
+    pub fn new<T>() -> impl PinInit<Self>
+    where
+        T: TimerPointer<U>,
+        U: TimerCallback,
+    {
+        pin_init!( Self {
+            // INVARIANTS: We initialize `timer` with `hrtimer_init` below.
+            timer <- Opaque::ffi_init(move |place: *mut bindings::hrtimer| {
+                // SAFETY: By design of `pin_init!`, `place` is a pointer live
+                // allocation. hrtimer_init will initialize `place` and does not
+                // require `place` to be initialized prior to the call.
+                unsafe {
+                    bindings::hrtimer_init(
+                        place,
+                        bindings::CLOCK_MONOTONIC as i32,
+                        bindings::hrtimer_mode_HRTIMER_MODE_REL,
+                    );
+                }
+
+                // SAFETY: `place` is pointing to a live allocation, so the deref
+                // is safe.
+                let function: *mut Option<_> = unsafe { core::ptr::addr_of_mut!((*place).function) };
+
+                // SAFETY: `function` points to a valid allocation and we have
+                // exclusive access.
+                unsafe { core::ptr::write(function, Some(T::run)) };
+            }),
+            _t: PhantomData,
+        })
+    }
+    /// Return an initializer for a new timer instance.
+
     /// Get a pointer to the contained `bindings::hrtimer`.
     ///
     /// # Safety
@@ -75,14 +113,19 @@ impl<U> Timer<U> {
         Ktime::from_ns(unsafe { ptr::read_volatile(&(*self.timer.get()).node.expires) })
     }
 
-    /// Do not call this, cancel through timer handle instead.
+    /// Cancel an initialized and potentially armed timer.
     ///
-    /// `hrtimer_cancel` is synchronized on C side, and safe to call racy.
-    unsafe fn cancel(self_ptr: *const Self) -> bool {
+    /// # Safety
+    ///
+    /// `self_ptr` must point to a valid `Self`.
+    unsafe fn raw_cancel(self_ptr: *const Self) -> bool {
         // SAFETY: timer_ptr points to an allocation of at least `Timer` size.
         let c_timer_ptr = unsafe { Timer::raw_get(self_ptr) };
 
-        // If handler is running, this will wait for handler to finish before returning
+        // If handler is running, this will wait for handler to finish before
+        // returning.
+        // SAFETY: `c_timer_ptr` is initialized and valid. Synchronization is
+        // handled on C side.
         unsafe { bindings::hrtimer_cancel(c_timer_ptr) != 0 }
     }
 
@@ -99,40 +142,10 @@ where
     U: TimerCallback,
     U: HasTimer<U>,
 {
-    /// Return an initializer for a new timer instance.
-    pub fn new() -> impl PinInit<Self> {
-        pin_init!( Self {
-            timer <- Opaque::ffi_init(move |place: *mut bindings::hrtimer| {
-                // SAFETY: By design of `pin_init!`, `place` is a pointer live
-                // allocation. hrtimer_init will initialize `place` and does not
-                // require `place` to be initialized prior to the call.
-                unsafe {
-                    bindings::hrtimer_init(
-                        place,
-                        bindings::CLOCK_MONOTONIC as i32,
-                        bindings::hrtimer_mode_HRTIMER_MODE_REL,
-                    );
-                }
-
-                // SAFETY: `place` is pointing to a live allocation, so the deref
-                // is safe. The `function` field might not be initialized, but
-                // `addr_of_mut` does not create a reference to the field.
-                let function: *mut Option<_> = unsafe { core::ptr::addr_of_mut!((*place).function) };
-
-                // SAFETY: `function` points to a valid allocation.
-                unsafe { core::ptr::write(function, None) };
-            }),
-            _t: PhantomData,
-        })
-    }
 }
 
-/// Implemented by pointer types to structs that embed a [`Timer`]. This trait
-/// facilitates queueing the timer through the pointer that implements the
-/// trait.
-///
-/// TODO
-/// Implemented by pointer types that can be the target of a C timer callback.
+/// Implemented by pointer types to structs that embed a [`Timer`], and that can
+/// be the target of a timer callback.
 ///
 /// Typical implementers would be [`Box<T>`], [`Arc<T>`], [`ARef<T>`] where `T`
 /// has a field of type `Timer`.
@@ -140,10 +153,17 @@ where
 /// Target must be [`Sync`] because timer callbacks happen in another thread of
 /// execution (hard or soft interrupt context).
 ///
+/// Scheduling a timer returns a `TimerHandle` that can be used to manipulate
+/// the timer. Note that it is OK to call the schedule function repeatedly, and
+/// that more than one `TimerHandle` associated with a `TimerPointer` may exist.
+/// A timer can be manipulated through any of the handles, and a handle may
+/// represent a cancelled timer.
+///
 /// # Safety
 ///
-/// Implementers of this trait must ensure that the timer represented by
-/// `TimerHandle` is canceled before the pointee is dropped.
+/// Implementers of this trait must ensure that instances of types implementing
+/// `TimerPointer` outlives any associated `TimerPointer::TimerHandle`
+/// instances.
 ///
 /// [`Box<T>`]: Box
 /// [`Arc<T>`]: Arc
@@ -156,12 +176,13 @@ where
     ///
     /// # Safety
     ///
-    /// If the timer is armed when the
+    /// If the timer is armed or if the timer callback is running when the
     /// handle is dropped, the drop method of `TimerHandle` must not return
-    /// before the timer is unarmed.
+    /// before the timer is unarmed and the callback has completed.
     type TimerHandle: TimerHandle;
 
-    /// Schedule the timer after `expires` time units
+    /// Schedule the timer after `expires` time units. If the timer was already
+    /// scheduled, it is rescheduled at the new expiry time.
     fn schedule(self, expires: u64) -> Self::TimerHandle;
 
     /// Callback to be called from C.
@@ -174,9 +195,11 @@ where
 
 /// # Safety
 ///
-/// When dropped, the timer represented by this handle must be cancelled.
+/// When dropped, the timer represented by this handle must be cancelled, if it
+/// is armed. If the timer handler is running when the handle is dropped, the
+/// drop method must wait for the handler to finish before returning.
 pub unsafe trait TimerHandle {
-    fn cancel(self);
+    fn cancel(&mut self) -> bool;
 }
 
 /// Implemented by structs that contain timer nodes.
@@ -220,6 +243,19 @@ pub unsafe trait HasTimer<U> {
         // implementor will have a `Timer` field at the specified offset.
         unsafe { ptr.cast::<u8>().sub(Self::OFFSET).cast::<Self>() }
     }
+
+    #[cfg(disable)]
+    unsafe fn schedule(&mut self) {
+        // Schedule the timer - if it is already scheduled it is removed and inserted
+        unsafe {
+            bindings::hrtimer_start_range_ns(
+                c_timer_ptr,
+                expires as i64,
+                0,
+                bindings::hrtimer_mode_HRTIMER_MODE_REL,
+            );
+        }
+    }
 }
 
 pub enum TimerRestart {
@@ -245,7 +281,7 @@ impl From<TimerRestart> for bindings::hrtimer_restart {
     }
 }
 
-/// Implemented by structs that can the target of a timer callback
+/// Implemented by structs that can the target of a timer callback.
 pub trait TimerCallback {
     /// Called by the timer logic when the timer fires.
     fn run(&self, context: TimerCallbackContext<'_, Self>) -> TimerRestart
@@ -253,8 +289,8 @@ pub trait TimerCallback {
         Self: Sized;
 }
 
-/// Privileged smart-pointer for timer methods which are only safe to call within a [`Timer`]
-/// callback
+/// Privileged smart-pointer for timer methods which are only safe to call
+/// within a [`Timer`] callback.
 pub struct TimerCallbackContext<'a, U>(&'a Timer<U>);
 
 impl<'a, U> TimerCallbackContext<'a, U> {
@@ -291,305 +327,28 @@ impl<'a, U> TimerCallbackContext<'a, U> {
     }
 }
 
-pub struct ArcTimerHandle<U>
+unsafe fn c_timer_ptr<U>(timer_ptr: *const U) -> *const bindings::hrtimer
 where
     U: HasTimer<U>,
 {
-    inner: Arc<U>,
+    // SAFETY: `self_ptr` is a valid pointer to a `U`.
+    let timer_ptr = unsafe { U::raw_get_timer(timer_ptr) };
+
+    // SAFETY: timer_ptr points to an allocation of at least `Timer` size.
+    unsafe { Timer::raw_get(timer_ptr) }
 }
 
-impl<U> ArcTimerHandle<U>
-where
-    U: HasTimer<U>,
-{
-    unsafe fn cancel_mut(&mut self) -> bool {
-        let timer_ptr = unsafe { <U as HasTimer<U>>::raw_get_timer(self.inner.as_ptr()) };
+#[cfg(disable)]
+    pub use pin::PinTimerHandle;
+pub use pin_mut::PinMutTimerHandle;
+#[cfg(disable)]
+pub use arc::ArcTimerHandle;
 
-        unsafe { Timer::<U>::cancel(timer_ptr) }
-    }
-
-}
-unsafe impl<U> TimerHandle for ArcTimerHandle<U>
-where
-    U: HasTimer<U>,
-{
-    fn cancel(self) {
-        drop(self)
-    }
-}
-
-impl<U> Drop for ArcTimerHandle<U>
-where
-    U: HasTimer<U>,
-{
-    fn drop(&mut self) {
-        unsafe {self.cancel_mut()};
-    }
-}
-
-unsafe impl<U> TimerPointer<U> for Arc<U>
-where
-    U: Send + Sync,
-    U: HasTimer<U>,
-    U: TimerCallback,
-{
-    type TimerHandle = ArcTimerHandle<U>;
-
-    fn schedule(self, expires: u64) -> ArcTimerHandle<U> {
-        // SAFETY: `self` contains a valid pointer to a `U`.
-        let timer_ptr = unsafe { U::raw_get_timer(self.as_ptr()) };
-
-        // SAFETY: timer_ptr points to an allocation of at least `Timer` size.
-        let c_timer_ptr = unsafe { Timer::raw_get(timer_ptr) };
-
-        // SAFETY: `place` is pointing to a live allocation, so the deref
-        // is safe. The `function` field might not be initialized, but
-        // `addr_of_mut` does not create a reference to the field.
-        let function: *mut Option<_> = unsafe { core::ptr::addr_of_mut!((*c_timer_ptr).function) };
-
-        // SAFETY: `function` points to a valid allocation.
-        unsafe { core::ptr::write(function, Some(Self::run)) };
-
-        // Schedule the timer - if it is already scheduled it is removed and
-        // inserted.
-
-        // TODO: I don't think we need to cancel the timer first
-        // Remove the timer if already queued.
-        let _removed = unsafe { bindings::hrtimer_cancel(c_timer_ptr) };
-
-        // SAFETY: c_timer_ptr points to a valid hrtimer instance that was
-        // initialized by `hrtimer_init`.
-        unsafe {
-            bindings::hrtimer_start_range_ns(
-                c_timer_ptr,
-                expires as i64,
-                0,
-                bindings::hrtimer_mode_HRTIMER_MODE_REL,
-            )
-        };
-
-        ArcTimerHandle { inner: self }
-    }
-
-    unsafe extern "C" fn run(ptr: *mut bindings::hrtimer) -> bindings::hrtimer_restart {
-        // `Timer` is `repr(transparent)`
-        let timer_ptr = ptr.cast::<kernel::hrtimer::Timer<U>>();
-        // SAFETY: We leaked the `Arc` when we enqueued the timer.
-        let receiver = unsafe { arc_receiver(ptr) };
-
-        // SAFETY:
-        // * We already verified that `timer_ptr` points to an initialized `Timer`
-        // * This is being called from the context of a timer callback
-        U::run(receiver, unsafe {
-            TimerCallbackContext::<U>::from_raw(timer_ptr.cast())
-        })
-        .into()
-    }
-}
-
-/// Get the `Arc` that was used to enqueue a timer.
-///
-/// # Safety
-///
-/// The caller must own a refcount on the `Arc` associated with `ptr` that was
-/// previously leaked.
-unsafe fn arc_receiver<'a, U>(ptr: *mut bindings::hrtimer) -> &'a U
-where
-    U: HasTimer<U>,
-    U: TimerCallback,
-{
-    // `Timer` is `repr(transparent)`
-    let timer_ptr = ptr.cast::<kernel::hrtimer::Timer<U>>();
-
-    // SAFETY: By C API contract `ptr` is the pointer we passed when
-    // enqueing the timer, so it is a `Timer<T>` embedded in a `T`.
-    let data_ptr = unsafe { U::timer_container_of(timer_ptr) };
-
-    unsafe { &*data_ptr }
-}
-
-pub struct PinTimerHandle<'a, U>
-where
-    U: HasTimer<U>,
-{
-    inner: Pin<&'a U>,
-}
-
-impl<'a, U> PinTimerHandle<'a, U>
-where
-    U: HasTimer<U>,
-{
-    unsafe fn cancel_mut(&mut self) -> bool {
-        let timer_ptr = unsafe { <U as HasTimer<U>>::raw_get_timer(unsafe {self.inner.get_ref() as *const _}) };
-
-        unsafe { Timer::<U>::cancel(timer_ptr) }
-    }
-
-}
-
-unsafe impl<'a, U> TimerHandle for PinTimerHandle<'a, U>
-where
-    U: HasTimer<U>,
-{
-    fn cancel(self) {
-        drop(self)
-    }
-}
-
-impl<'a, U> Drop for PinTimerHandle<'a, U>
-where
-    U: HasTimer<U>,
-{
-    fn drop(&mut self) {
-        unsafe {self.cancel_mut()};
-    }
-}
-
-unsafe impl<'a, U> TimerPointer<U> for Pin<&'a U>
-where
-    U: Send + Sync,
-    U: HasTimer<U>,
-    U: TimerCallback,
-{
-    type TimerHandle = PinTimerHandle<'a, U>;
-
-    fn schedule(self, expires: u64) -> Self::TimerHandle {
-        // SAFETY: We are not moving out of `unpinned` and we are not handing
-        // out mutable references to it.
-        let unpinned = unsafe {Pin::into_inner_unchecked(self) };
-
-        // Cast to pointer
-        let self_ptr = unpinned as *const U;
-
-        // Get a pointer to the timer struct
-        let timer_ptr = unsafe { U::raw_get_timer(self_ptr) };
-
-        // `Timer` is `repr(transparent)`
-        let c_timer_ptr = timer_ptr as *mut bindings::hrtimer;
-
-        // SAFETY: `place` is pointing to a live allocation, so the deref
-        // is safe. The `function` field might not be initialized, but
-        // `addr_of_mut` does not create a reference to the field.
-        let function: *mut Option<_> = unsafe { core::ptr::addr_of_mut!((*c_timer_ptr).function) };
-
-        // SAFETY: `function` points to a valid allocation.
-        unsafe { core::ptr::write(function, Some(Self::run)) };
-
-        // Schedule the timer - if it is already scheduled it is removed and inserted
-        unsafe {
-            bindings::hrtimer_start_range_ns(
-                c_timer_ptr,
-                expires as i64,
-                0,
-                bindings::hrtimer_mode_HRTIMER_MODE_REL,
-            );
-        }
-
-        PinTimerHandle { inner: unsafe {Pin::new_unchecked(unpinned)} }
-    }
-
-    unsafe extern "C" fn run(ptr: *mut bindings::hrtimer) -> bindings::hrtimer_restart {
-        // `Timer` is `repr(transparent)`
-        let timer_ptr = ptr as *mut Timer<U>;
-        let receiver_ptr = unsafe { U::timer_container_of(timer_ptr) };
-        let receiver_ref = unsafe { &mut *receiver_ptr };
-        let receiver_pin = unsafe { Pin::new_unchecked(receiver_ref) };
-        U::run(&receiver_pin, unsafe {
-            TimerCallbackContext::<U>::from_raw(timer_ptr.cast())
-        }).into()
-    }
-}
-pub struct PinMutTimerHandle<'a, U>
-where
-    U: HasTimer<U>,
-{
-    inner: Pin<&'a mut U>,
-}
-
-impl<'a, U> PinMutTimerHandle<'a, U>
-where
-    U: HasTimer<U>,
-{
-    unsafe fn cancel_mut(&mut self) -> bool {
-        let timer_ptr = unsafe { <U as HasTimer<U>>::raw_get_timer(unsafe {self.inner.as_mut().get_unchecked_mut() as *mut _}) };
-
-        unsafe { Timer::<U>::cancel(timer_ptr) }
-    }
-
-}
-
-unsafe impl<'a, U> TimerHandle for PinMutTimerHandle<'a, U>
-where
-    U: HasTimer<U>,
-{
-    fn cancel(self) {
-        drop(self)
-    }
-}
-
-impl<'a, U> Drop for PinMutTimerHandle<'a, U>
-where
-    U: HasTimer<U>,
-{
-    fn drop(&mut self) {
-        unsafe {self.cancel_mut()};
-    }
-}
-
-unsafe impl<'a, U> TimerPointer<U> for Pin<&'a mut U>
-where
-    U: Send + Sync,
-    U: HasTimer<U>,
-    U: TimerCallback,
-{
-    type TimerHandle = PinMutTimerHandle<'a, U>;
-
-    fn schedule(self, expires: u64) -> Self::TimerHandle {
-        // SAFETY: We are not moving out of `unpinned` and we are not handing
-        // out mutable references to it.
-        let unpinned = unsafe {Pin::into_inner_unchecked(self) };
-
-        // Cast to pointer
-        let self_ptr = unpinned as *mut U;
-
-        // Get a pointer to the timer struct
-        let timer_ptr = unsafe { U::raw_get_timer(self_ptr) };
-
-        // `Timer` is `repr(transparent)`
-        let c_timer_ptr = timer_ptr as *mut bindings::hrtimer;
-
-        // SAFETY: `place` is pointing to a live allocation, so the deref
-        // is safe. The `function` field might not be initialized, but
-        // `addr_of_mut` does not create a reference to the field.
-        let function: *mut Option<_> = unsafe { core::ptr::addr_of_mut!((*c_timer_ptr).function) };
-
-        // SAFETY: `function` points to a valid allocation.
-        unsafe { core::ptr::write(function, Some(Self::run)) };
-
-        // Schedule the timer - if it is already scheduled it is removed and inserted
-        unsafe {
-            bindings::hrtimer_start_range_ns(
-                c_timer_ptr,
-                expires as i64,
-                0,
-                bindings::hrtimer_mode_HRTIMER_MODE_REL,
-            );
-        }
-
-        PinMutTimerHandle { inner: unsafe {Pin::new_unchecked(unpinned)} }
-    }
-
-    unsafe extern "C" fn run(ptr: *mut bindings::hrtimer) -> bindings::hrtimer_restart {
-        // `Timer` is `repr(transparent)`
-        let timer_ptr = ptr as *mut Timer<U>;
-        let receiver_ptr = unsafe { U::timer_container_of(timer_ptr) };
-        let receiver_ref = unsafe { &mut *receiver_ptr };
-        let receiver_pin = unsafe { Pin::new_unchecked(receiver_ref) };
-        U::run(&receiver_pin, unsafe {
-            TimerCallbackContext::<U>::from_raw(timer_ptr.cast())
-        }).into()
-    }
-}
+#[cfg(disable)]
+mod pin;
+mod pin_mut;
+#[cfg(disable)]
+mod arc;
 
 /// Use to implement the [`HasTimer<T>`] trait.
 ///
