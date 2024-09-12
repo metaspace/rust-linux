@@ -55,12 +55,30 @@ impl_has_timer! {
     impl HasTimer<Self> for PinMutIntrusiveTimer { self.timer }
 }
 
+fn stack_timer() -> Result<()> {
+    use kernel::stack_try_pin_init;
+
+    pr_info!("Timer on the stack\n");
+
+    stack_try_pin_init!( let has_timer =? PinMutIntrusiveTimer::new() );
+    let flag_handle = has_timer.flag.clone();
+    let _handle = has_timer.as_mut().schedule(200_000_000);
+
+    while !flag_handle.load(Ordering::Relaxed) {
+        core::hint::spin_loop()
+    }
+
+    pr_info!("Flag raised\n");
+    Ok(())
+}
+
+
 #[pin_data]
 struct ArcIntrusiveTimer {
     #[pin]
     timer: Timer<Self>,
     // TODO: Change to CondVar
-    flag: Arc<AtomicBool>,
+    flag: AtomicBool,
 }
 
 impl ArcIntrusiveTimer
@@ -69,7 +87,7 @@ impl ArcIntrusiveTimer
     {
         try_pin_init!(Self {
             timer <- Timer::new::<Arc<_>>(),
-            flag: Arc::new(AtomicBool::new(false), kernel::alloc::flags::GFP_KERNEL)?,
+            flag: AtomicBool::new(false),
         })
     }
 }
@@ -87,23 +105,6 @@ impl TimerCallback for ArcIntrusiveTimer
 
 impl_has_timer! {
     impl HasTimer<Self> for ArcIntrusiveTimer { self.timer }
-}
-
-fn stack_timer() -> Result<()> {
-    use kernel::stack_try_pin_init;
-
-    pr_info!("Timer on the stack\n");
-
-    stack_try_pin_init!( let has_timer =? PinMutIntrusiveTimer::new() );
-    let flag_handle = has_timer.flag.clone();
-    let _handle = has_timer.as_mut().schedule(200_000_000);
-
-    while !flag_handle.load(Ordering::Relaxed) {
-        core::hint::spin_loop()
-    }
-
-    pr_info!("Flag raised\n");
-    Ok(())
 }
 
 fn arc_timer() -> Result<()> {
