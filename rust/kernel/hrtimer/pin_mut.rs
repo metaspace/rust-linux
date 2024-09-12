@@ -1,5 +1,6 @@
 use super::c_timer_ptr;
 use super::HasTimer;
+use super::RawTimerCallback;
 use super::Timer;
 use super::TimerCallback;
 use super::TimerCallbackContext;
@@ -67,13 +68,20 @@ where
         PinMutTimerHandle { inner: self }
     }
 
+}
+
+unsafe impl<'a, U> RawTimerCallback for Pin<&'a mut U>
+where
+    U: HasTimer<U>,
+    U: TimerCallback<CallbackTarget<'a> = Self>,
+{
     unsafe extern "C" fn run(ptr: *mut bindings::hrtimer) -> bindings::hrtimer_restart {
         // `Timer` is `repr(transparent)`
         let timer_ptr = ptr as *mut Timer<U>;
         let receiver_ptr = unsafe { U::timer_container_of(timer_ptr) };
         let receiver_ref = unsafe { &mut *receiver_ptr };
         let receiver_pin = unsafe { Pin::new_unchecked(receiver_ref) };
-        U::run(&receiver_pin, unsafe {
+        U::run(receiver_pin, unsafe {
             TimerCallbackContext::<U>::from_raw(timer_ptr.cast())
         })
         .into()

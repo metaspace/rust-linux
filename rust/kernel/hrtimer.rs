@@ -47,7 +47,7 @@ unsafe impl<U> Send for Timer<U> {}
 // timer from multiple threads
 unsafe impl<U> Sync for Timer<U> {}
 
-type RawTimerCallback = unsafe extern "C" fn(*mut bindings::hrtimer) -> bindings::hrtimer_restart;
+type RawTimerCallbackPointer = unsafe extern "C" fn(*mut bindings::hrtimer) -> bindings::hrtimer_restart;
 
 impl<U> Timer<U> {
     pub fn new<T>() -> impl PinInit<Self>
@@ -75,7 +75,7 @@ impl<U> Timer<U> {
 
                 // SAFETY: `function` points to a valid allocation and we have
                 // exclusive access.
-                unsafe { core::ptr::write(function, Some(T::run)) };
+                unsafe { core::ptr::write(function, Some(U::CallbackTarget::run)) };
             }),
             _t: PhantomData,
         })
@@ -137,13 +137,6 @@ impl<U> Timer<U> {
     // TODO: hrtimer_forward outside of callback context
 }
 
-impl<U> Timer<U>
-where
-    U: TimerCallback,
-    U: HasTimer<U>,
-{
-}
-
 /// Implemented by pointer types to structs that embed a [`Timer`], and that can
 /// be the target of a timer callback.
 ///
@@ -185,6 +178,9 @@ where
     /// scheduled, it is rescheduled at the new expiry time.
     fn schedule(self, expires: u64) -> Self::TimerHandle;
 
+}
+
+pub unsafe trait RawTimerCallback {
     /// Callback to be called from C.
     ///
     /// # Safety
@@ -283,8 +279,10 @@ impl From<TimerRestart> for bindings::hrtimer_restart {
 
 /// Implemented by structs that can the target of a timer callback.
 pub trait TimerCallback {
+    type CallbackTarget<'a>: RawTimerCallback;
+
     /// Called by the timer logic when the timer fires.
-    fn run(&self, context: TimerCallbackContext<'_, Self>) -> TimerRestart
+    fn run(this: Self::CallbackTarget<'_>, context: TimerCallbackContext<'_, Self>) -> TimerRestart
     where
         Self: Sized;
 }
@@ -341,13 +339,11 @@ where
 #[cfg(disable)]
     pub use pin::PinTimerHandle;
 pub use pin_mut::PinMutTimerHandle;
-#[cfg(disable)]
 pub use arc::ArcTimerHandle;
 
 #[cfg(disable)]
 mod pin;
 mod pin_mut;
-#[cfg(disable)]
 mod arc;
 
 /// Use to implement the [`HasTimer<T>`] trait.
