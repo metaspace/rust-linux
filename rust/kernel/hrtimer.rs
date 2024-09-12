@@ -336,12 +336,10 @@ where
     unsafe { Timer::raw_get(timer_ptr) }
 }
 
-#[cfg(disable)]
-    pub use pin::PinTimerHandle;
+pub use pin::PinTimerHandle;
 pub use pin_mut::PinMutTimerHandle;
 pub use arc::ArcTimerHandle;
 
-#[cfg(disable)]
 mod pin;
 mod pin_mut;
 mod arc;

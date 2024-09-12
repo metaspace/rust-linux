@@ -1,5 +1,6 @@
 use super::c_timer_ptr;
 use super::HasTimer;
+use super::RawTimerCallback;
 use super::Timer;
 use super::TimerCallback;
 use super::TimerCallbackContext;
@@ -58,8 +59,11 @@ where
 
     fn schedule(self, expires: u64) -> Self::TimerHandle {
         use core::ops::Deref;
-        let self_ptr = self.deref();
 
+        // Cast to pointer
+        let self_ptr = self.deref() as *const U;
+
+        // Schedule the timer - if it is already scheduled it is removed and inserted
         unsafe {
             bindings::hrtimer_start_range_ns(
                 c_timer_ptr(self_ptr).cast_mut(),
@@ -69,17 +73,23 @@ where
             );
         }
 
-        // INVARIANTS: By type invariant on `Timer`, `self` is initialized.
         PinTimerHandle { inner: self }
     }
 
+}
+
+unsafe impl<'a, U> RawTimerCallback for Pin<&'a U>
+where
+    U: HasTimer<U>,
+    U: TimerCallback<CallbackTarget<'a> = Self>,
+{
     unsafe extern "C" fn run(ptr: *mut bindings::hrtimer) -> bindings::hrtimer_restart {
         // `Timer` is `repr(transparent)`
         let timer_ptr = ptr as *mut Timer<U>;
         let receiver_ptr = unsafe { U::timer_container_of(timer_ptr) };
-        let receiver_ref = unsafe { &mut *receiver_ptr };
+        let receiver_ref = unsafe { &*receiver_ptr };
         let receiver_pin = unsafe { Pin::new_unchecked(receiver_ref) };
-        U::run(&receiver_pin, unsafe {
+        U::run(receiver_pin, unsafe {
             TimerCallbackContext::<U>::from_raw(timer_ptr.cast())
         })
         .into()

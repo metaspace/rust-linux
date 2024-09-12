@@ -55,7 +55,7 @@ impl_has_timer! {
     impl HasTimer<Self> for PinMutIntrusiveTimer { self.timer }
 }
 
-fn stack_timer() -> Result<()> {
+fn stack_mut_timer() -> Result<()> {
     use kernel::stack_try_pin_init;
 
     pr_info!("Timer on the stack\n");
@@ -72,6 +72,56 @@ fn stack_timer() -> Result<()> {
     Ok(())
 }
 
+#[pin_data]
+struct PinIntrusiveTimer {
+    #[pin]
+    timer: Timer<Self>,
+    // TODO: Change to CondVar
+    flag: Arc<AtomicBool>,
+}
+
+impl PinIntrusiveTimer
+{
+    fn new() -> impl PinInit<Self, kernel::error::Error>
+    {
+        try_pin_init!(Self {
+            timer <- Timer::new::<Pin<&_>>(),
+            flag: Arc::new(AtomicBool::new(false), kernel::alloc::flags::GFP_KERNEL)?,
+        })
+    }
+}
+
+impl TimerCallback for PinIntrusiveTimer
+{
+    type CallbackTarget<'a> =  Pin<&'a Self>;
+
+    fn run(this: Self::CallbackTarget<'_>, _ctx: TimerCallbackContext<'_, Self>) -> TimerRestart {
+        pr_info!("Timer called\n");
+        this.flag.store(true, Ordering::Relaxed);
+        TimerRestart::NoRestart
+    }
+}
+
+impl_has_timer! {
+    impl HasTimer<Self> for PinIntrusiveTimer { self.timer }
+}
+
+fn stack_timer() -> Result<()> {
+    use kernel::stack_try_pin_init;
+
+    pr_info!("Timer on the stack\n");
+
+    stack_try_pin_init!( let has_timer =? PinIntrusiveTimer::new() );
+    //let flag_handle = has_timer.flag.clone();
+    let _handle = has_timer.as_ref().schedule(200_000_000);
+
+    while !has_timer.flag.load(Ordering::Relaxed) {
+        core::hint::spin_loop()
+    }
+
+    pr_info!("Flag raised\n");
+    Ok(())
+}
 
 #[pin_data]
 struct ArcIntrusiveTimer {
@@ -125,6 +175,7 @@ impl kernel::Module for RustMinimal {
         pr_info!("Rust hrtimer sample (init)\n");
         pr_info!("Am I built-in? {}\n", !cfg!(MODULE));
 
+        stack_mut_timer()?;
         stack_timer()?;
         arc_timer()?;
 
