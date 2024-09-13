@@ -252,7 +252,7 @@ pub unsafe trait HasTimer<U> {
     ///
     /// # Safety
     ///
-    /// `timer_ptr` must point to a valid `Self`.
+    /// `self_ptr` must point to a valid `Self`.
     unsafe fn c_timer_ptr(self_ptr: *const Self) -> *const bindings::hrtimer
     {
         // SAFETY: `self_ptr` is a valid pointer to a `Self`.
@@ -262,12 +262,14 @@ pub unsafe trait HasTimer<U> {
         unsafe { Timer::raw_get(timer_ptr) }
     }
 
-    #[cfg(disable)]
-    unsafe fn schedule(&mut self) {
+    /// # Safety
+    ///
+    /// `self_ptr` must point to a valid `Self`.
+    unsafe fn schedule(self_ptr: *const Self, expires: u64) {
         // Schedule the timer - if it is already scheduled it is removed and inserted
         unsafe {
             bindings::hrtimer_start_range_ns(
-                c_timer_ptr,
+                Self::c_timer_ptr(self_ptr).cast_mut(),
                 expires as i64,
                 0,
                 bindings::hrtimer_mode_HRTIMER_MODE_REL,

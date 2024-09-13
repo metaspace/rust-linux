@@ -61,15 +61,7 @@ where
         // Cast to pointer
         let self_ptr = self.deref() as *const U;
 
-        // Schedule the timer - if it is already scheduled it is removed and inserted
-        unsafe {
-            bindings::hrtimer_start_range_ns(
-                U::c_timer_ptr(self_ptr).cast_mut(),
-                expires as i64,
-                0,
-                bindings::hrtimer_mode_HRTIMER_MODE_REL,
-            );
-        }
+        unsafe { U::schedule(self_ptr, expires) };
 
         PinTimerHandle { inner: self }
     }

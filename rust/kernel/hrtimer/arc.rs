@@ -50,16 +50,9 @@ where
         // Schedule the timer - if it is already scheduled it is removed and
         // inserted.
 
-        // SAFETY: c_timer_ptr points to a valid hrtimer instance that was
-        // initialized by `hrtimer_init`.
-        unsafe {
-            bindings::hrtimer_start_range_ns(
-                U::c_timer_ptr(self.as_ptr()).cast_mut(),
-                expires as i64,
-                0,
-                bindings::hrtimer_mode_HRTIMER_MODE_REL,
-            )
-        };
+        // SAFETY: Since we generate the pointer passed to `schedule` from a
+        // valid reference, it is a valid pointer.
+        unsafe { U::schedule(self.as_ptr(), expires) };
 
         ArcTimerHandle { inner: self }
     }
