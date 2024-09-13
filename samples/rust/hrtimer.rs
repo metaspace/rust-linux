@@ -29,20 +29,17 @@ struct PinMutIntrusiveTimer {
     flag: Arc<AtomicBool>,
 }
 
-impl PinMutIntrusiveTimer
-{
-    fn new() -> impl PinInit<Self, kernel::error::Error>
-    {
+impl PinMutIntrusiveTimer {
+    fn new() -> impl PinInit<Self, kernel::error::Error> {
         try_pin_init!(Self {
-            timer <- Timer::new::<Pin<&mut _>>(),
+            timer <- Timer::new(),
             flag: Arc::new(AtomicBool::new(false), kernel::alloc::flags::GFP_KERNEL)?,
         })
     }
 }
 
-impl TimerCallback for PinMutIntrusiveTimer
-{
-    type CallbackTarget<'a> =  Pin<&'a mut Self>;
+impl TimerCallback for PinMutIntrusiveTimer {
+    type CallbackTarget<'a> = Pin<&'a mut Self>;
 
     fn run(this: Self::CallbackTarget<'_>, _ctx: TimerCallbackContext<'_, Self>) -> TimerRestart {
         pr_info!("Timer called\n");
@@ -80,20 +77,17 @@ struct PinIntrusiveTimer {
     flag: Arc<AtomicBool>,
 }
 
-impl PinIntrusiveTimer
-{
-    fn new() -> impl PinInit<Self, kernel::error::Error>
-    {
+impl PinIntrusiveTimer {
+    fn new() -> impl PinInit<Self, kernel::error::Error> {
         try_pin_init!(Self {
-            timer <- Timer::new::<Pin<&_>>(),
+            timer <- Timer::new(),
             flag: Arc::new(AtomicBool::new(false), kernel::alloc::flags::GFP_KERNEL)?,
         })
     }
 }
 
-impl TimerCallback for PinIntrusiveTimer
-{
-    type CallbackTarget<'a> =  Pin<&'a Self>;
+impl TimerCallback for PinIntrusiveTimer {
+    type CallbackTarget<'a> = Pin<&'a Self>; 
 
     fn run(this: Self::CallbackTarget<'_>, _ctx: TimerCallbackContext<'_, Self>) -> TimerRestart {
         pr_info!("Timer called\n");
@@ -112,8 +106,8 @@ fn stack_timer() -> Result<()> {
     pr_info!("Timer on the stack\n");
 
     stack_try_pin_init!( let has_timer =? PinIntrusiveTimer::new() );
-    //let flag_handle = has_timer.flag.clone();
     let _handle = has_timer.as_ref().schedule(200_000_000);
+
 
     while !has_timer.flag.load(Ordering::Relaxed) {
         core::hint::spin_loop()
@@ -131,20 +125,17 @@ struct ArcIntrusiveTimer {
     flag: AtomicBool,
 }
 
-impl ArcIntrusiveTimer
-{
-    fn new() -> impl PinInit<Self, kernel::error::Error>
-    {
+impl ArcIntrusiveTimer {
+    fn new() -> impl PinInit<Self, kernel::error::Error> {
         try_pin_init!(Self {
-            timer <- Timer::new::<Arc<_>>(),
+            timer <- Timer::new(),
             flag: AtomicBool::new(false),
         })
     }
 }
 
-impl TimerCallback for ArcIntrusiveTimer
-{
-    type CallbackTarget<'a> =  Arc<Self>;
+impl TimerCallback for ArcIntrusiveTimer {
+    type CallbackTarget<'a> = Arc<Self>;
 
     fn run(this: Self::CallbackTarget<'_>, _ctx: TimerCallbackContext<'_, Self>) -> TimerRestart {
         pr_info!("Timer called\n");

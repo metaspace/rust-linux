@@ -14,13 +14,12 @@
 //!
 
 // TODO: hrtimer_nanosleep
+// TODO: schedule_hrtimeout
 // TODO: schedule_hrtimeout_range
 // TODO: schedule_hrtimeout_range_clock
-// TODO: schedule_hrtimeout
 // TODO: sleeper API -> task related?
-// TODO: timer modes ABS/REL/HARD/SOFT
+// TODO: timer modes 
 // TODO: Add cancel example
-// TODO: Add non mut pin example
 // TODO: Access target through handle
 
 use core::{marker::PhantomData, ptr};
@@ -47,13 +46,15 @@ unsafe impl<U> Send for Timer<U> {}
 // timer from multiple threads
 unsafe impl<U> Sync for Timer<U> {}
 
+/// The C callback function pointer type.
 type RawTimerCallbackPointer = unsafe extern "C" fn(*mut bindings::hrtimer) -> bindings::hrtimer_restart;
 
-impl<U> Timer<U> {
-    pub fn new<T>() -> impl PinInit<Self>
+impl<T> Timer<T> {
+
+    /// Return an initializer for a new timer instance.
+    pub fn new() -> impl PinInit<Self>
     where
-        T: TimerPointer<U>,
-        U: TimerCallback,
+        T: TimerCallback,
     {
         pin_init!( Self {
             // INVARIANTS: We initialize `timer` with `hrtimer_init` below.
@@ -75,12 +76,11 @@ impl<U> Timer<U> {
 
                 // SAFETY: `function` points to a valid allocation and we have
                 // exclusive access.
-                unsafe { core::ptr::write(function, Some(U::CallbackTarget::run)) };
+                unsafe { core::ptr::write(function, Some(T::CallbackTarget::run)) };
             }),
             _t: PhantomData,
         })
     }
-    /// Return an initializer for a new timer instance.
 
     /// Get a pointer to the contained `bindings::hrtimer`.
     ///
@@ -115,6 +115,9 @@ impl<U> Timer<U> {
 
     /// Cancel an initialized and potentially armed timer.
     ///
+    /// If the timer handler is running, this will block until the handler is
+    /// finished.
+    ///
     /// # Safety
     ///
     /// `self_ptr` must point to a valid `Self`.
@@ -137,8 +140,7 @@ impl<U> Timer<U> {
     // TODO: hrtimer_forward outside of callback context
 }
 
-/// Implemented by pointer types to structs that embed a [`Timer`], and that can
-/// be the target of a timer callback.
+/// Implemented by pointer types to structs that embed a [`Timer`].
 ///
 /// Typical implementers would be [`Box<T>`], [`Arc<T>`], [`ARef<T>`] where `T`
 /// has a field of type `Timer`.
@@ -146,24 +148,22 @@ impl<U> Timer<U> {
 /// Target must be [`Sync`] because timer callbacks happen in another thread of
 /// execution (hard or soft interrupt context).
 ///
-/// Scheduling a timer returns a `TimerHandle` that can be used to manipulate
+/// Scheduling a timer returns a [`TimerHandle`] that can be used to manipulate
 /// the timer. Note that it is OK to call the schedule function repeatedly, and
-/// that more than one `TimerHandle` associated with a `TimerPointer` may exist.
-/// A timer can be manipulated through any of the handles, and a handle may
-/// represent a cancelled timer.
+/// that more than one [`TimerHandle`] associated with a `TimerPointer` may
+/// exist. A timer can be manipulated through any of the handles, and a handle
+/// may represent a cancelled timer.
 ///
 /// # Safety
 ///
 /// Implementers of this trait must ensure that instances of types implementing
-/// `TimerPointer` outlives any associated `TimerPointer::TimerHandle`
+/// [`TimerPointer`] outlives any associated [`TimerPointer::TimerHandle`]
 /// instances.
 ///
 /// [`Box<T>`]: Box
 /// [`Arc<T>`]: Arc
 /// [`ARef<T>`]: crate::types::ARef
-pub unsafe trait TimerPointer<U>: Sync + Sized
-where
-    U: TimerCallback,
+pub unsafe trait TimerPointer: Sync + Sized
 {
     /// A handle representing a scheduled timer.
     ///
@@ -180,6 +180,10 @@ where
 
 }
 
+// TODO
+// This is split from `TimerPointer` to avoid cycles when resolving generic
+// types. `Timer::new` needs to be able to know the concrete type of the C
+// callback function. If we merge this with `TimerPointer`, we get cycles in
 pub unsafe trait RawTimerCallback {
     /// Callback to be called from C.
     ///
@@ -187,6 +191,16 @@ pub unsafe trait RawTimerCallback {
     ///
     /// Only to be called by C code in `hrtimer` subsystem.
     unsafe extern "C" fn run(ptr: *mut bindings::hrtimer) -> bindings::hrtimer_restart;
+}
+
+/// Implemented by structs that can the target of a timer callback.
+pub trait TimerCallback {
+    type CallbackTarget<'a>: RawTimerCallback;
+
+    /// Called by the timer logic when the timer fires.
+    fn run(this: Self::CallbackTarget<'_>, context: TimerCallbackContext<'_, Self>) -> TimerRestart
+    where
+        Self: Sized;
 }
 
 /// # Safety
@@ -277,16 +291,6 @@ impl From<TimerRestart> for bindings::hrtimer_restart {
     }
 }
 
-/// Implemented by structs that can the target of a timer callback.
-pub trait TimerCallback {
-    type CallbackTarget<'a>: RawTimerCallback;
-
-    /// Called by the timer logic when the timer fires.
-    fn run(this: Self::CallbackTarget<'_>, context: TimerCallbackContext<'_, Self>) -> TimerRestart
-    where
-        Self: Sized;
-}
-
 /// Privileged smart-pointer for timer methods which are only safe to call
 /// within a [`Timer`] callback.
 pub struct TimerCallbackContext<'a, U>(&'a Timer<U>);
@@ -339,6 +343,7 @@ where
 pub use pin::PinTimerHandle;
 pub use pin_mut::PinMutTimerHandle;
 pub use arc::ArcTimerHandle;
+pub use arc::schedule;
 
 mod pin;
 mod pin_mut;

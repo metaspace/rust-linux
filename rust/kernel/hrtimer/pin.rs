@@ -28,9 +28,8 @@ where
     U: HasTimer<U>,
 {
     fn cancel(&mut self) -> bool {
-        let timer_ptr = unsafe {
-            <U as HasTimer<U>>::raw_get_timer(unsafe { self.inner.get_ref() as *const _ })
-        };
+        let self_ptr = self.inner.get_ref() as *const U;
+        let timer_ptr = unsafe { <U as HasTimer<U>>::raw_get_timer(self_ptr) };
 
         // SAFETY: By type invariant, `timer_ptr` points to a valid and
         // initialized `Timer`.
@@ -49,11 +48,11 @@ where
 
 // SAFETY: We capture the lifetime of `Self` when we create a `PinTimerHandle`,
 // so `Self` will outlive the handle.
-unsafe impl<'a, U> TimerPointer<U> for Pin<&'a U>
+unsafe impl<'a, U> TimerPointer for Pin<&'a U>
 where
     U: Send + Sync,
     U: HasTimer<U>,
-    U: TimerCallback,
+    U: TimerCallback<CallbackTarget<'a> = Self>,
 {
     type TimerHandle = PinTimerHandle<'a, U>;
 
@@ -75,7 +74,6 @@ where
 
         PinTimerHandle { inner: self }
     }
-
 }
 
 unsafe impl<'a, U> RawTimerCallback for Pin<&'a U>

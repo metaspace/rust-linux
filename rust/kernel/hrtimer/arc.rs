@@ -1,14 +1,13 @@
-use core::mem;
-
 use super::c_timer_ptr;
 use super::HasTimer;
+use super::RawTimerCallback;
 use super::Timer;
 use super::TimerCallback;
 use super::TimerCallbackContext;
 use super::TimerHandle;
 use super::TimerPointer;
-use super::RawTimerCallback;
 use crate::sync::Arc;
+use core::mem;
 
 pub struct ArcTimerHandle<U>
 where
@@ -17,14 +16,13 @@ where
     pub(crate) inner: Arc<U>,
 }
 
-impl<U> ArcTimerHandle<U> where U: HasTimer<U> {}
-
 unsafe impl<U> TimerHandle for ArcTimerHandle<U>
 where
     U: HasTimer<U>,
 {
     fn cancel(&mut self) -> bool {
-        let timer_ptr = unsafe { <U as HasTimer<U>>::raw_get_timer(self.inner.as_ptr()) };
+        let self_ptr = self.inner.as_ptr();
+        let timer_ptr = unsafe { <U as HasTimer<U>>::raw_get_timer(self_ptr) };
 
         unsafe { Timer::<U>::raw_cancel(timer_ptr) }
     }
@@ -41,11 +39,11 @@ where
 
 // SAFETY: We store an `Arc` in the handle, so the pointee of the `Arc` will
 // outlive the handle.
-unsafe impl<U> TimerPointer<U> for Arc<U>
+unsafe impl<U> TimerPointer for Arc<U>
 where
     U: Send + Sync,
     U: HasTimer<U>,
-    U: TimerCallback,
+    U: for<'a> TimerCallback<CallbackTarget<'a> = Self>,
 {
     type TimerHandle = ArcTimerHandle<U>;
 
@@ -71,7 +69,7 @@ where
 unsafe impl<U> RawTimerCallback for Arc<U>
 where
     U: HasTimer<U>,
-    U: for <'a> TimerCallback<CallbackTarget<'a> = Arc<U>>,
+    U: for<'a> TimerCallback<CallbackTarget<'a> = Self>,
 {
     unsafe extern "C" fn run(ptr: *mut bindings::hrtimer) -> bindings::hrtimer_restart {
         // `Timer` is `repr(transparent)`
@@ -81,7 +79,7 @@ where
         // enqueing the timer, so it is a `Timer<T>` embedded in a `T`.
         let data_ptr = unsafe { U::timer_container_of(timer_ptr) };
 
-        let not_our_arc = unsafe {Arc::from_raw(data_ptr) };
+        let not_our_arc = unsafe { Arc::from_raw(data_ptr) };
         let receiver = not_our_arc.clone();
         mem::forget(not_our_arc);
 
@@ -94,4 +92,3 @@ where
         .into()
     }
 }
-

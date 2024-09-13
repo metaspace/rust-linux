@@ -8,6 +8,12 @@ use super::TimerHandle;
 use super::TimerPointer;
 use core::pin::Pin;
 
+/// A handle for a `Pin<&mut HasTimer>`. When the handle exists, the timer might be
+/// armed.
+///
+/// # Invariants
+///
+/// - The `Timer` in `inner` is valid and initialized.
 pub struct PinMutTimerHandle<'a, U>
 where
     U: HasTimer<U>,
@@ -15,17 +21,20 @@ where
     pub(crate) inner: Pin<&'a mut U>,
 }
 
+// SAFETY: We cancel the timer when the handle is dropped. The implementation of
+// the `cancel` method will block if the timer handler is running.
 unsafe impl<'a, U> TimerHandle for PinMutTimerHandle<'a, U>
 where
     U: HasTimer<U>,
 {
     fn cancel(&mut self) -> bool {
-        let timer_ptr = unsafe {
-            <U as HasTimer<U>>::raw_get_timer(unsafe {
-                self.inner.as_mut().get_unchecked_mut() as *mut _
-            })
-        };
+        // SAFETY: We are not moving out of `self` or handing out mutable
+        // references to `self`.
+        let self_ptr = unsafe { self.inner.as_mut().get_unchecked_mut() as *mut U };
+        let timer_ptr = unsafe { <U as HasTimer<U>>::raw_get_timer(self_ptr) };
 
+        // SAFETY: By type invariant, `timer_ptr` points to a valid and
+        // initialized `Timer`.
         unsafe { Timer::<U>::raw_cancel(timer_ptr) }
     }
 }
@@ -41,11 +50,11 @@ where
 
 // SAFETY: We capture the lifetime of `Self` when we create a
 // `PinMutTimerHandle`, so `Self` will outlive the handle.
-unsafe impl<'a, U> TimerPointer<U> for Pin<&'a mut U>
+unsafe impl<'a, U> TimerPointer for Pin<&'a mut U>
 where
     U: Send + Sync,
     U: HasTimer<U>,
-    U: TimerCallback,
+    U: TimerCallback<CallbackTarget<'a> = Self>,
 {
     type TimerHandle = PinMutTimerHandle<'a, U>;
 
@@ -67,7 +76,6 @@ where
 
         PinMutTimerHandle { inner: self }
     }
-
 }
 
 unsafe impl<'a, U> RawTimerCallback for Pin<&'a mut U>
