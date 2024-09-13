@@ -7,7 +7,6 @@
 //!
 //! # TODO
 //!
-//! - Handle repeated `schedule` and multiple handles ( for pointers that are `Clone/Copy`)
 //! - Update documentation
 //! - Update safety comments
 //! - Properly credit Lyude for contributions
@@ -18,7 +17,7 @@
 // TODO: schedule_hrtimeout_range
 // TODO: schedule_hrtimeout_range_clock
 // TODO: sleeper API -> task related?
-// TODO: timer modes 
+// TODO: timer modes
 // TODO: Add cancel example
 // TODO: Access target through handle
 
@@ -47,10 +46,10 @@ unsafe impl<U> Send for Timer<U> {}
 unsafe impl<U> Sync for Timer<U> {}
 
 /// The C callback function pointer type.
-type RawTimerCallbackPointer = unsafe extern "C" fn(*mut bindings::hrtimer) -> bindings::hrtimer_restart;
+type RawTimerCallbackPointer =
+    unsafe extern "C" fn(*mut bindings::hrtimer) -> bindings::hrtimer_restart;
 
 impl<T> Timer<T> {
-
     /// Return an initializer for a new timer instance.
     pub fn new() -> impl PinInit<Self>
     where
@@ -163,8 +162,7 @@ impl<T> Timer<T> {
 /// [`Box<T>`]: Box
 /// [`Arc<T>`]: Arc
 /// [`ARef<T>`]: crate::types::ARef
-pub unsafe trait TimerPointer: Sync + Sized
-{
+pub unsafe trait TimerPointer: Sync + Sized {
     /// A handle representing a scheduled timer.
     ///
     /// # Safety
@@ -177,13 +175,9 @@ pub unsafe trait TimerPointer: Sync + Sized
     /// Schedule the timer after `expires` time units. If the timer was already
     /// scheduled, it is rescheduled at the new expiry time.
     fn schedule(self, expires: u64) -> Self::TimerHandle;
-
 }
 
-// TODO
-// This is split from `TimerPointer` to avoid cycles when resolving generic
-// types. `Timer::new` needs to be able to know the concrete type of the C
-// callback function. If we merge this with `TimerPointer`, we get cycles in
+// This is split from `TimerPointer` to make it easier to specify trait bounds.
 pub unsafe trait RawTimerCallback {
     /// Callback to be called from C.
     ///
@@ -252,6 +246,20 @@ pub unsafe trait HasTimer<U> {
         // SAFETY: By the safety requirement of this trait, the trait
         // implementor will have a `Timer` field at the specified offset.
         unsafe { ptr.cast::<u8>().sub(Self::OFFSET).cast::<Self>() }
+    }
+
+    /// Get pointer to embedded `bindings::hrtimer` struct.
+    ///
+    /// # Safety
+    ///
+    /// `timer_ptr` must point to a valid `Self`.
+    unsafe fn c_timer_ptr(self_ptr: *const Self) -> *const bindings::hrtimer
+    {
+        // SAFETY: `self_ptr` is a valid pointer to a `Self`.
+        let timer_ptr = unsafe { Self::raw_get_timer(self_ptr) };
+
+        // SAFETY: timer_ptr points to an allocation of at least `Timer` size.
+        unsafe { Timer::raw_get(timer_ptr) }
     }
 
     #[cfg(disable)]
@@ -329,25 +337,13 @@ impl<'a, U> TimerCallbackContext<'a, U> {
     }
 }
 
-unsafe fn c_timer_ptr<U>(timer_ptr: *const U) -> *const bindings::hrtimer
-where
-    U: HasTimer<U>,
-{
-    // SAFETY: `self_ptr` is a valid pointer to a `U`.
-    let timer_ptr = unsafe { U::raw_get_timer(timer_ptr) };
-
-    // SAFETY: timer_ptr points to an allocation of at least `Timer` size.
-    unsafe { Timer::raw_get(timer_ptr) }
-}
-
+pub use arc::ArcTimerHandle;
 pub use pin::PinTimerHandle;
 pub use pin_mut::PinMutTimerHandle;
-pub use arc::ArcTimerHandle;
-pub use arc::schedule;
 
+mod arc;
 mod pin;
 mod pin_mut;
-mod arc;
 
 /// Use to implement the [`HasTimer<T>`] trait.
 ///

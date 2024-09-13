@@ -1,4 +1,3 @@
-use super::c_timer_ptr;
 use super::HasTimer;
 use super::RawTimerCallback;
 use super::Timer;
@@ -65,7 +64,7 @@ where
         // Schedule the timer - if it is already scheduled it is removed and inserted
         unsafe {
             bindings::hrtimer_start_range_ns(
-                c_timer_ptr(self_ptr).cast_mut(),
+                U::c_timer_ptr(self_ptr).cast_mut(),
                 expires as i64,
                 0,
                 bindings::hrtimer_mode_HRTIMER_MODE_REL,
