@@ -6,7 +6,8 @@ use core::sync::atomic::AtomicBool;
 use core::sync::atomic::Ordering;
 use kernel::{
     hrtimer::{
-        Timer, TimerCallback, TimerCallbackContext, TimerPointer, TimerRestart, UnsafeTimerPointer,
+        ScopedTimerPointer, Timer, TimerCallback, TimerCallbackContext, TimerPointer, TimerRestart,
+        UnsafeTimerPointer,
     },
     impl_has_timer,
     prelude::*,
@@ -54,7 +55,7 @@ impl_has_timer! {
     impl HasTimer<Self> for PinMutIntrusiveTimer { self.timer }
 }
 
-fn stack_mut_timer() -> Result<()> {
+fn unsafe_stack_mut_timer() -> Result<()> {
     use kernel::stack_try_pin_init;
 
     pr_info!("Timer on the stack\n");
@@ -66,6 +67,25 @@ fn stack_mut_timer() -> Result<()> {
     while !flag_handle.load(Ordering::Relaxed) {
         core::hint::spin_loop()
     }
+
+    pr_info!("Flag raised\n");
+    Ok(())
+}
+
+fn safe_stack_mut_timer() -> Result<()> {
+    use kernel::stack_try_pin_init;
+
+    pr_info!("Timer on the stack\n");
+
+    stack_try_pin_init!( let has_timer =? PinMutIntrusiveTimer::new() );
+    let flag_handle = has_timer.flag.clone();
+    has_timer.schedule_scoped(200_000_000, || {
+        while !flag_handle.load(Ordering::Relaxed) {
+            core::hint::spin_loop()
+        }
+
+        pr_info!("Flag raised\n");
+    });
 
     pr_info!("Flag raised\n");
     Ok(())
@@ -102,7 +122,7 @@ impl_has_timer! {
     impl HasTimer<Self> for PinIntrusiveTimer { self.timer }
 }
 
-fn stack_timer() -> Result<()> {
+fn unsafe_stack_timer() -> Result<()> {
     use kernel::stack_try_pin_init;
 
     pr_info!("Timer on the stack\n");
@@ -115,6 +135,23 @@ fn stack_timer() -> Result<()> {
     }
 
     pr_info!("Flag raised\n");
+    Ok(())
+}
+
+fn safe_stack_timer() -> Result<()> {
+    use kernel::stack_try_pin_init;
+
+    pr_info!("Timer on the stack\n");
+
+    stack_try_pin_init!( let has_timer =? PinIntrusiveTimer::new() );
+    has_timer.as_ref().schedule_scoped(200_000_000, || {
+        while !has_timer.flag.load(Ordering::Relaxed) {
+            core::hint::spin_loop()
+        }
+
+        pr_info!("Flag raised\n");
+    });
+
     Ok(())
 }
 
@@ -167,8 +204,10 @@ impl kernel::Module for RustMinimal {
         pr_info!("Rust hrtimer sample (init)\n");
         pr_info!("Am I built-in? {}\n", !cfg!(MODULE));
 
-        stack_mut_timer()?;
-        stack_timer()?;
+        unsafe_stack_mut_timer()?;
+        unsafe_stack_timer()?;
+        safe_stack_timer()?;
+        safe_stack_mut_timer()?;
         arc_timer()?;
 
         Ok(RustMinimal {})

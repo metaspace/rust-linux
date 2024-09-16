@@ -192,9 +192,31 @@ pub unsafe trait UnsafeTimerPointer: Sync + Sized {
     ///
     /// # Safety
     ///
-    /// Caller promises to run the destructor of the returned
-    /// `Self::TimerHandle`. That is, do not leak the handle.
+    /// Caller promises to either keep the timer structure alive until the timer
+    /// is dead, or run the destructor of the returned `Self::TimerHandle`.
     unsafe fn schedule(self, expires: u64) -> Self::TimerHandle;
+}
+
+pub unsafe trait ScopedTimerPointer {
+    fn schedule_scoped<T, F>(self, expires: u64, f: F) -> T
+    where
+        F: FnOnce() -> T;
+}
+
+unsafe impl<U> ScopedTimerPointer for U
+where
+    U: UnsafeTimerPointer,
+{
+
+    fn schedule_scoped<T, F>(self, expires: u64, f: F) -> T
+    where
+        F: FnOnce() -> T,
+    {
+        let handle = unsafe { UnsafeTimerPointer::schedule(self, expires) };
+        let t = f();
+        drop(handle);
+        t
+    }
 }
 
 // This is split from `TimerPointer` to make it easier to specify trait bounds.
@@ -274,8 +296,7 @@ pub unsafe trait HasTimer<U> {
     /// # Safety
     ///
     /// `self_ptr` must point to a valid `Self`.
-    unsafe fn c_timer_ptr(self_ptr: *const Self) -> *const bindings::hrtimer
-    {
+    unsafe fn c_timer_ptr(self_ptr: *const Self) -> *const bindings::hrtimer {
         // SAFETY: `self_ptr` is a valid pointer to a `Self`.
         let timer_ptr = unsafe { Self::raw_get_timer(self_ptr) };
 
