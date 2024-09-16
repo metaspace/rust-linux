@@ -5,7 +5,9 @@
 use core::sync::atomic::AtomicBool;
 use core::sync::atomic::Ordering;
 use kernel::{
-    hrtimer::{Timer, TimerCallback, TimerCallbackContext, TimerPointer, TimerRestart},
+    hrtimer::{
+        Timer, TimerCallback, TimerCallbackContext, TimerPointer, TimerRestart, UnsafeTimerPointer,
+    },
     impl_has_timer,
     prelude::*,
     sync::Arc,
@@ -59,7 +61,7 @@ fn stack_mut_timer() -> Result<()> {
 
     stack_try_pin_init!( let has_timer =? PinMutIntrusiveTimer::new() );
     let flag_handle = has_timer.flag.clone();
-    let _handle = has_timer.as_mut().schedule(200_000_000);
+    let _handle = unsafe { has_timer.as_mut().schedule(200_000_000) };
 
     while !flag_handle.load(Ordering::Relaxed) {
         core::hint::spin_loop()
@@ -87,7 +89,7 @@ impl PinIntrusiveTimer {
 }
 
 impl TimerCallback for PinIntrusiveTimer {
-    type CallbackTarget<'a> = Pin<&'a Self>; 
+    type CallbackTarget<'a> = Pin<&'a Self>;
 
     fn run(this: Self::CallbackTarget<'_>, _ctx: TimerCallbackContext<'_, Self>) -> TimerRestart {
         pr_info!("Timer called\n");
@@ -106,8 +108,7 @@ fn stack_timer() -> Result<()> {
     pr_info!("Timer on the stack\n");
 
     stack_try_pin_init!( let has_timer =? PinIntrusiveTimer::new() );
-    let _handle = has_timer.as_ref().schedule(200_000_000);
-
+    let _handle = unsafe { has_timer.as_ref().schedule(200_000_000) };
 
     while !has_timer.flag.load(Ordering::Relaxed) {
         core::hint::spin_loop()

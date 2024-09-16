@@ -177,6 +177,26 @@ pub unsafe trait TimerPointer: Sync + Sized {
     fn schedule(self, expires: u64) -> Self::TimerHandle;
 }
 
+pub unsafe trait UnsafeTimerPointer: Sync + Sized {
+    /// A handle representing a scheduled timer.
+    ///
+    /// # Safety
+    ///
+    /// If the timer is armed or if the timer callback is running when the
+    /// handle is dropped, the drop method of `TimerHandle` must not return
+    /// before the timer is unarmed and the callback has completed.
+    type TimerHandle: TimerHandle;
+
+    /// Schedule the timer after `expires` time units. If the timer was already
+    /// scheduled, it is rescheduled at the new expiry time.
+    ///
+    /// # Safety
+    ///
+    /// Caller promises to run the destructor of the returned
+    /// `Self::TimerHandle`. That is, do not leak the handle.
+    unsafe fn schedule(self, expires: u64) -> Self::TimerHandle;
+}
+
 // This is split from `TimerPointer` to make it easier to specify trait bounds.
 pub unsafe trait RawTimerCallback {
     /// Callback to be called from C.
@@ -238,13 +258,14 @@ pub unsafe trait HasTimer<U> {
     ///
     /// # Safety
     ///
-    /// `ptr` must point to a [`Timer<T,U>`] field in a struct of type `Self`.
+    /// `ptr` must point to a [`Timer<U>`] field in a struct of type `Self`.
     unsafe fn timer_container_of(ptr: *mut Timer<U>) -> *mut Self
     where
         Self: Sized,
     {
-        // SAFETY: By the safety requirement of this trait, the trait
-        // implementor will have a `Timer` field at the specified offset.
+        // SAFETY: By the safety requirement of this function and the `HasTimer`
+        // trait, the following expression will yield a pointer to the `Self`
+        // containing the timer addressed by `ptr`.
         unsafe { ptr.cast::<u8>().sub(Self::OFFSET).cast::<Self>() }
     }
 
@@ -343,9 +364,11 @@ pub use arc::ArcTimerHandle;
 pub use pin::PinTimerHandle;
 pub use pin_mut::PinMutTimerHandle;
 
-mod arc;
 mod pin;
 mod pin_mut;
+// TODO
+// mod box;
+mod arc;
 
 /// Use to implement the [`HasTimer<T>`] trait.
 ///

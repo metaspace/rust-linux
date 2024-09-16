@@ -4,7 +4,7 @@ use super::Timer;
 use super::TimerCallback;
 use super::TimerCallbackContext;
 use super::TimerHandle;
-use super::TimerPointer;
+use super::UnsafeTimerPointer;
 use core::pin::Pin;
 
 /// A handle for a `Pin<&mut HasTimer>`. When the handle exists, the timer might be
@@ -49,7 +49,7 @@ where
 
 // SAFETY: We capture the lifetime of `Self` when we create a
 // `PinMutTimerHandle`, so `Self` will outlive the handle.
-unsafe impl<'a, U> TimerPointer for Pin<&'a mut U>
+unsafe impl<'a, U> UnsafeTimerPointer for Pin<&'a mut U>
 where
     U: Send + Sync,
     U: HasTimer<U>,
@@ -57,7 +57,7 @@ where
 {
     type TimerHandle = PinMutTimerHandle<'a, U>;
 
-    fn schedule(self, expires: u64) -> Self::TimerHandle {
+    unsafe fn schedule(self, expires: u64) -> Self::TimerHandle {
         use core::ops::Deref;
 
         // Cast to pointer
