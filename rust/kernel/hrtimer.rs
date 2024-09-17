@@ -394,6 +394,9 @@ macro_rules! impl_has_timer {
     }
 }
 
+// `box` is a reserved keyword, so prefix with `t` for timer
+mod tbox;
+
 mod arc;
 mod pin;
 mod pin_mut;
