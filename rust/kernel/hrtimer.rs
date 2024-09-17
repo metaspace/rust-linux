@@ -176,7 +176,7 @@ pub trait TimerCallback {
     type CallbackTargetParameter<'a>;
 
     /// Called by the timer logic when the timer fires.
-    fn run(this: Self::CallbackTargetParameter<'_>)
+    fn run(this: Self::CallbackTargetParameter<'_>) -> TimerRestart
     where
         Self: Sized;
 }
@@ -266,6 +266,32 @@ pub unsafe trait HasTimer<U> {
                 0,
                 bindings::hrtimer_mode_HRTIMER_MODE_REL,
             );
+        }
+    }
+}
+
+/// Restart policy for timers.
+pub enum TimerRestart {
+    /// Timer should not be restarted.
+    NoRestart,
+    /// Timer should be restarted.
+    Restart,
+}
+
+impl From<u32> for TimerRestart {
+    fn from(value: bindings::hrtimer_restart) -> Self {
+        match value {
+            0 => Self::NoRestart,
+            _ => Self::Restart,
+        }
+    }
+}
+
+impl From<TimerRestart> for bindings::hrtimer_restart {
+    fn from(value: TimerRestart) -> Self {
+        match value {
+            TimerRestart::NoRestart => bindings::hrtimer_restart_HRTIMER_NORESTART,
+            TimerRestart::Restart => bindings::hrtimer_restart_HRTIMER_RESTART,
         }
     }
 }
