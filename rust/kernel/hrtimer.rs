@@ -38,12 +38,13 @@ use core::marker::PhantomData;
 /// # Invariants
 ///
 /// * `self.timer` is initialized by `bindings::hrtimer_init`.
-#[repr(transparent)]
 #[pin_data]
 #[repr(C)]
 pub struct Timer<U> {
     #[pin]
     timer: Opaque<bindings::hrtimer>,
+    // This field goes away when `bindings::hrtimer_setup` is added.
+    mode: TimerMode,
     _t: PhantomData<U>,
 }
 
@@ -56,7 +57,7 @@ unsafe impl<U> Sync for Timer<U> {}
 
 impl<T> Timer<T> {
     /// Return an initializer for a new timer instance.
-    pub fn new() -> impl PinInit<Self>
+    pub fn new(mode: TimerMode) -> impl PinInit<Self>
     where
         T: TimerCallback,
     {
@@ -70,7 +71,7 @@ impl<T> Timer<T> {
                     bindings::hrtimer_init(
                         place,
                         bindings::CLOCK_MONOTONIC as i32,
-                        bindings::hrtimer_mode_HRTIMER_MODE_REL,
+                        mode.into(),
                     );
                 }
 
@@ -83,6 +84,7 @@ impl<T> Timer<T> {
                 // exclusive access.
                 unsafe { core::ptr::write(function, Some(T::CallbackTarget::run)) };
             }),
+            mode: mode,
             _t: PhantomData,
         })
     }
@@ -330,7 +332,7 @@ pub unsafe trait HasTimer<U> {
                 Self::c_timer_ptr(self_ptr).cast_mut(),
                 expires.to_ns(),
                 0,
-                bindings::hrtimer_mode_HRTIMER_MODE_REL,
+                (*Self::raw_get_timer(self_ptr)).mode.into(),
             );
         }
     }
@@ -359,6 +361,84 @@ impl From<TimerRestart> for bindings::hrtimer_restart {
             TimerRestart::NoRestart => bindings::hrtimer_restart_HRTIMER_NORESTART,
             TimerRestart::Restart => bindings::hrtimer_restart_HRTIMER_RESTART,
         }
+    }
+}
+
+/// Operational mode of [`Timer`].
+#[derive(Clone, Copy)]
+pub enum TimerMode {
+    /// Timer expires at the given expiration time.
+    Absolute,
+    /// Timer expires after the given expiration time interpreted as a duration from now.
+    Relative,
+    /// Timer does not move between CPU cores.
+    Pinned,
+    /// Timer handler is executed in soft irq context.
+    Soft,
+    /// Timer handler is executed in hard irq context.
+    Hard,
+    /// Timer expires at the given expiration time.
+    /// Timer does not move between CPU cores.
+    AbsolutePinned,
+    /// Timer expires after the given expiration time interpreted as a duration from now.
+    /// Timer does not move between CPU cores.
+    RelativePinned,
+    /// Timer expires at the given expiration time.
+    /// Timer handler is executed in soft irq context.
+    AbsoluteSoft,
+    /// Timer expires after the given expiration time interpreted as a duration from now.
+    /// Timer handler is executed in soft irq context.
+    RelativeSoft,
+    /// Timer expires at the given expiration time.
+    /// Timer does not move between CPU cores.
+    /// Timer handler is executed in soft irq context.
+    AbsolutePinnedSoft,
+    /// Timer expires after the given expiration time interpreted as a duration from now.
+    /// Timer does not move between CPU cores.
+    /// Timer handler is executed in soft irq context.
+    RelativePinnedSoft,
+    /// Timer expires at the given expiration time.
+    /// Timer handler is executed in hard irq context.
+    AbsoluteHard,
+    /// Timer expires after the given expiration time interpreted as a duration from now.
+    /// Timer handler is executed in hard irq context.
+    RelativeHard,
+    /// Timer expires at the given expiration time.
+    /// Timer does not move between CPU cores.
+    /// Timer handler is executed in hard irq context.
+    AbsolutePinnedHard,
+    /// Timer expires after the given expiration time interpreted as a duration from now.
+    /// Timer does not move between CPU cores.
+    /// Timer handler is executed in hard irq context.
+    RelativePinnedHard,
+}
+
+impl From<TimerMode> for bindings::hrtimer_mode {
+    fn from(value: TimerMode) -> Self {
+        use bindings::*;
+        match value {
+            TimerMode::Absolute => hrtimer_mode_HRTIMER_MODE_ABS,
+            TimerMode::Relative => hrtimer_mode_HRTIMER_MODE_REL,
+            TimerMode::Pinned => hrtimer_mode_HRTIMER_MODE_PINNED,
+            TimerMode::Soft => hrtimer_mode_HRTIMER_MODE_SOFT,
+            TimerMode::Hard => hrtimer_mode_HRTIMER_MODE_HARD,
+            TimerMode::AbsolutePinned => hrtimer_mode_HRTIMER_MODE_ABS_PINNED,
+            TimerMode::RelativePinned => hrtimer_mode_HRTIMER_MODE_REL_PINNED,
+            TimerMode::AbsoluteSoft => hrtimer_mode_HRTIMER_MODE_ABS_SOFT,
+            TimerMode::RelativeSoft => hrtimer_mode_HRTIMER_MODE_REL_SOFT,
+            TimerMode::AbsolutePinnedSoft => hrtimer_mode_HRTIMER_MODE_ABS_PINNED_SOFT,
+            TimerMode::RelativePinnedSoft => hrtimer_mode_HRTIMER_MODE_REL_PINNED_SOFT,
+            TimerMode::AbsoluteHard => hrtimer_mode_HRTIMER_MODE_ABS_HARD,
+            TimerMode::RelativeHard => hrtimer_mode_HRTIMER_MODE_REL_HARD,
+            TimerMode::AbsolutePinnedHard => hrtimer_mode_HRTIMER_MODE_ABS_PINNED_HARD,
+            TimerMode::RelativePinnedHard => hrtimer_mode_HRTIMER_MODE_REL_PINNED_HARD,
+        }
+    }
+}
+
+impl From<TimerMode> for u64 {
+    fn from(value: TimerMode) -> Self {
+        Into::<bindings::hrtimer_mode>::into(value) as u64
     }
 }
 
