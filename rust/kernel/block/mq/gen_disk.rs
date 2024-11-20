@@ -121,7 +121,7 @@ impl GenDiskBuilder {
             bindings::__blk_mq_alloc_disk(
                 tagset.raw_tag_set(),
                 &mut lim,
-                data.cast_mut(),
+                data,
                 static_lock_class!().as_ptr(),
             )
         })?;

@@ -54,7 +54,7 @@ impl<T: Operations> TagSet<T> {
                     queue_depth: num_tags,
                     cmd_size,
                     flags: bindings::BLK_MQ_F_SHOULD_MERGE,
-                    driver_data: tagset_data.into_foreign().cast_mut(),
+                    driver_data: tagset_data.into_foreign(),
                     nr_maps: num_maps,
                     ..tag_set
                 }
