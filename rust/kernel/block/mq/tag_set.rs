@@ -54,7 +54,7 @@ impl<T: Operations> TagSet<T> {
                     queue_depth: num_tags,
                     cmd_size,
                     flags: bindings::BLK_MQ_F_SHOULD_MERGE,
-                    driver_data: tagset_data.into_foreign(),
+                    driver_data: tagset_data.into_foreign().cast(),
                     nr_maps: num_maps,
                     ..tag_set
                 }
@@ -68,7 +68,7 @@ impl<T: Operations> TagSet<T> {
                 let status = error::to_result( unsafe { bindings::blk_mq_alloc_tag_set(tag_set.get())});
                 if status.is_err() {
                     // SAFETY: We created `driver_data` above with `into_foreign`
-                    unsafe { T::TagSetData::from_foreign((*tag_set.get()).driver_data) };
+                    unsafe { T::TagSetData::from_foreign((*tag_set.get()).driver_data.cast()) };
                 }
                 status
             }),
@@ -107,6 +107,6 @@ impl<T: Operations> PinnedDrop for TagSet<T> {
 
         // SAFETY: `tagset_data` was created by a call to
         // `ForeignOwnable::into_foreign` in `TagSet::try_new()`
-        unsafe { T::TagSetData::from_foreign(tagset_data) };
+        unsafe { T::TagSetData::from_foreign(tagset_data.cast()) };
     }
 }
