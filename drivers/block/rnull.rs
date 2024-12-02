@@ -10,9 +10,8 @@
 //! - softirq completion
 //! - timer completion
 //!
-//! The driver is configured at module load time by parameters
-//! `param_memory_backed`, `param_capacity_mib`, `param_irq_mode` and
-//! `param_completion_time_nsec!.
+//! The driver is configured at module load time by parameters `memory_backed`,
+//! `capacity_mib`, `irq_mode` and `completion_time_nsec!.
 
 use core::ops::Deref;
 
@@ -46,30 +45,24 @@ module! {
     author: "Andreas Hindborg",
     license: "GPL v2",
     params: {
-        param_memory_backed: bool {
-            default: true,
-            permissions: 0,
+        memory_backed: u8 {
+            default: 0,
             description: "Use memory backing",
         },
-        // Problems with pin_init when `irq_mode`
-        param_irq_mode: u8 {
+        irq_mode: u8 {
             default: 0,
-            permissions: 0,
             description: "IRQ Mode (0: None, 1: Soft, 2: Timer)",
         },
-        param_capacity_mib: u64 {
+        capacity_mib: u64 {
             default: 4096,
-            permissions: 0,
             description: "Device capacity in MiB",
         },
-        param_completion_time_nsec: u64 {
+        completion_time_nsec: u64 {
             default: 1_000_000,
-            permissions: 0,
             description: "Completion time in nano seconds for timer mode",
         },
-        param_block_size: u16 {
+        block_size: u16 {
             default: 4096,
-            permissions: 0,
             description: "Block size in bytes",
         },
     },
@@ -107,25 +100,25 @@ impl kernel::Module for NullBlkModule {
         pr_info!("Rust null_blk loaded\n");
         let tagset = Arc::pin_init(TagSet::new(1, (), 256, 1), flags::GFP_KERNEL)?;
 
-        let irq_mode = (*param_irq_mode.read()).try_into()?;
+        let irq_mode = (*module_parameters::irq_mode::read()).try_into()?;
         pr_info!("IrqMode: {irq_mode:?}\n");
-        let block_size = *param_block_size.read();
+        let block_size = *module_parameters::block_size::read();
 
         let queue_data = Box::try_pin_init(
             try_pin_init!(QueueData {
                 tree <- TreeContainer::new(),
                 completion_time_nsec: <u64 as TryInto<i64>>::try_into(
-                    *param_completion_time_nsec.read()
+                    *module_parameters::completion_time_nsec::read()
                 )?,
                 irq_mode,
-                memory_backed: *param_memory_backed.read(),
+                memory_backed: *module_parameters::memory_backed::read() != 0,
                 block_size,
             }),
             flags::GFP_KERNEL,
         )?;
 
         let disk = gen_disk::GenDiskBuilder::new()
-            .capacity_sectors(*param_capacity_mib.read() << 11)
+            .capacity_sectors(*module_parameters::capacity_mib::read() << 11)
             .logical_block_size(block_size.into())?
             .physical_block_size(block_size.into())?
             .rotational(false)
@@ -177,7 +170,7 @@ struct TreeContainer {
 impl TreeContainer {
     fn new() -> impl PinInit<Self> {
         pin_init!(TreeContainer {
-            tree <- CacheAligned::new_initializer(XArray::new(0)),
+            tree <- CacheAligned::new_initializer(XArray::new(kernel::xarray::AllocKind::Alloc)),
             lock <- CacheAligned::new_initializer(new_spinlock!((), "rnullb:mem")),
         })
     }
@@ -198,11 +191,12 @@ impl NullBlkDevice {
     fn write(tree: TreeRef<'_>, sector: usize, segment: &Segment<'_>) -> Result {
         let idx = sector >> bindings::PAGE_SECTORS_SHIFT;
 
-        let mut page = if let Some(page) = tree.get_locked(idx) {
+        let mut guard = tree.lock();
+        let mut page = if let Some(page) = guard.get_mut(idx) {
             page
         } else {
-            tree.set(idx, Box::new(Page::alloc_page(flags::GFP_KERNEL)?, flags::GFP_KERNEL)?)?;
-            tree.get_locked(idx).unwrap()
+            guard.store(idx, Box::new(Page::alloc_page(flags::GFP_KERNEL)?, flags::GFP_KERNEL)?, flags::GFP_KERNEL).map_err(|(_v,e)| e)?;
+            guard.get_mut(idx).unwrap()
         };
 
         segment.copy_to_page(&mut page)?;
@@ -214,8 +208,9 @@ impl NullBlkDevice {
     fn read(tree: TreeRef<'_>, sector: usize, segment: &mut Segment<'_>) -> Result {
         let idx = sector >> bindings::PAGE_SECTORS_SHIFT;
 
-        if let Some(page) = tree.get_locked(idx) {
-            segment.copy_from_page(page.deref())?;
+        let guard = tree.lock();
+        if let Some(page) = guard.get(idx) {
+            segment.copy_from_page(page)?;
         }
 
         Ok(())
