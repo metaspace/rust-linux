@@ -121,7 +121,7 @@ impl GenDiskBuilder {
             bindings::__blk_mq_alloc_disk(
                 tagset.raw_tag_set(),
                 &mut lim,
-                data.cast_mut(),
+                data.cast(),
                 static_lock_class!().as_ptr(),
             )
         })?;
@@ -254,6 +254,6 @@ impl<T: Operations> Drop for GenDisk<T> {
         // SAFETY: `queue.queuedata` was created by `GenDiskBuilder::build` with
         // a call to `ForeignOwnable::into_foreign` to create `queuedata`.
         // `ForeignOwnable::from_foreign` is only called here.
-        let _queue_data = unsafe { T::QueueData::from_foreign(queue_data) };
+        let _queue_data = unsafe { T::QueueData::from_foreign(queue_data.cast()) };
     }
 }
