@@ -131,9 +131,9 @@ impl<'a> ModInfoBuilder<'a> {
                         ::kernel::module_param::RacyKernelParam =
                         ::kernel::module_param::RacyKernelParam(::kernel::bindings::kernel_param {{
                             name: if cfg!(MODULE) {{
-                                c\"{module_name}.{param_name}\"
-                            }} else {{
                                 c\"{param_name}\"
+                            }} else {{
+                                c\"{module_name}.{param_name}\"
                             }}.as_ptr(),
                             // SAFETY: `__this_module` is constructed by the kernel at load time
                             // and will not be freed until the module is unloaded.
