@@ -19,6 +19,7 @@
 #![cfg_attr(not(CONFIG_RUSTC_HAS_COERCE_POINTEE), feature(unsize))]
 #![feature(inline_const)]
 #![feature(lint_reasons)]
+#![cfg_attr(not(CONFIG_RUSTC_HAS_CONST_MUT_REFS_MERGED), feature(const_mut_refs))]
 
 // Ensure conditional compilation based on the kernel configuration works;
 // otherwise we may silently break things like initcall handling.
@@ -35,6 +36,8 @@ pub mod alloc;
 pub mod block;
 #[doc(hidden)]
 pub mod build_assert;
+#[cfg(CONFIG_CONFIGFS_FS)]
+pub mod configfs;
 pub mod cred;
 pub mod device;
 pub mod error;
