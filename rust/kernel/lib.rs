@@ -36,6 +36,7 @@ pub mod alloc;
 pub mod block;
 mod build_assert;
 mod cache_aligned;
+pub mod configfs;
 pub mod cred;
 pub mod device;
 pub mod error;
