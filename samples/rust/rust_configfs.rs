@@ -1,12 +1,15 @@
 // SPDX-License-Identifier: GPL-2.0
 
-//! Rust minimal sample.
+//! Rust configfs sample.
 
 use kernel::c_str;
 use kernel::configfs;
 use kernel::configfs::AttributeList;
+use kernel::new_mutex;
 use kernel::prelude::*;
 use kernel::str::CString;
+use kernel::alloc::flags;
+use kernel::sync::Mutex;
 
 module! {
     type: RustConfigfs,
@@ -19,43 +22,74 @@ module! {
 #[pin_data]
 struct RustConfigfs {
     #[pin]
-    config: configfs::Subsystem<Self, Self, Self>,
-    msg: &'static CStr,
+    config: configfs::Subsystem,
+    foo: &'static CStr,
+    #[pin]
+    bar: Mutex<(KBox<[u8;4096]>, usize)>,
 }
 
 impl kernel::InPlaceModule for RustConfigfs {
     fn init(module: &'static ThisModule) -> impl PinInit<Self, Error> {
         pr_info!("Rust configfs sample (init)\n");
-        static ATTR: configfs::Attribute<RustConfigfs, RustConfigfs> = configfs::Attribute::new(c_str!("attr"));
-        static ATTRIBUTES: AttributeList<2> =
-            AttributeList([&ATTR as *const _ as _, core::ptr::null_mut()]);
-        static TPE: configfs::ItemType<RustConfigfs, RustConfigfs, RustConfigfs> =
+        static FOO_ATTR: configfs::Attribute<FooOps, RustConfigfs> =
+            configfs::Attribute::new(c_str!("attr"));
+        static BAR_ATTR: configfs::Attribute<BarOps, RustConfigfs> =
+            configfs::Attribute::new(c_str!("bar"));
+        static ATTRIBUTES: AttributeList<3> =
+            AttributeList([
+                &FOO_ATTR as *const _ as _,
+                &BAR_ATTR as *const _ as _,
+                core::ptr::null_mut(),
+            ]);
+        static TPE: configfs::ItemType<RustConfigfs, RustConfigfs> =
             configfs::ItemType::new(&ATTRIBUTES);
         try_pin_init!(Self {
             config <- configfs::Subsystem::new(c_str!("rust_configfs"), module, &TPE),
-            msg: c_str!("Hello World\n"),
+            foo: c_str!("Hello World\n"),
+            bar <- new_mutex!((KBox::new([0;4096], flags::GFP_KERNEL)?,0)),
         })
     }
 }
 
-fn show_msg(container: &RustConfigfs, page: &mut [u8; 4096]) -> isize {
-    todo!()
-}
+
 
 impl configfs::GroupOperations for RustConfigfs {
     fn make_group() {}
     fn drop_item() {}
 }
 
-impl configfs::AttributeOperations<RustConfigfs> for RustConfigfs {
-    fn show(container: &Self, page: &mut [u8; 4096]) -> isize {
-        pr_info!("Show\n");
-        let data = container.msg;
+struct FooOps;
+
+impl configfs::AttributeOperations<RustConfigfs> for FooOps {
+    fn show(container: &RustConfigfs, page: &mut [u8; 4096]) -> isize {
+        pr_info!("Show foo\n");
+        let data = container.foo;
         page[0..data.len()].copy_from_slice(data);
         data.len() as _
     }
-    fn store(container: &Self, page: &[u8]) -> isize {
-        pr_info!("Store\n");
+    fn store(container: &RustConfigfs, page: &[u8]) -> isize {
+        pr_info!("Store foo (not allowed)\n");
+        page.len() as _
+    }
+}
+
+struct BarOps;
+
+impl configfs::AttributeOperations<RustConfigfs> for BarOps {
+    fn show(container: &RustConfigfs, page: &mut [u8; 4096]) -> isize {
+        pr_info!("Show bar\n");
+        let guard = container.bar.lock();
+        let data = guard.0.as_slice();
+        let len = guard.1;
+        page[0..len].copy_from_slice(&data[0..len]);
+        len as _
+    }
+
+    fn store(container: &RustConfigfs, page: &[u8]) -> isize {
+        pr_info!("Store bar\n");
+        let mut guard = container.bar.lock();
+        guard.0[0..page.len()].copy_from_slice(page);
+        guard.1 = page.len();
         page.len() as _
     }
 }

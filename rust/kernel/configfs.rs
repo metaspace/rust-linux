@@ -6,27 +6,26 @@ use kernel::alloc::flags;
 use crate::{prelude::*, types::Opaque};
 
 #[pin_data]
-pub struct Subsystem<A, G, C> {
+pub struct Subsystem {
     #[pin]
     subsystem: Opaque<bindings::configfs_subsystem>,
-    _p: PhantomData<(A, G, C)>,
 }
 
-unsafe impl<A, G, C> Sync for Subsystem<A, G, C> {}
+unsafe impl Sync for Subsystem {}
 
-unsafe impl<A, G, C> Send for Subsystem<A, G, C> {}
+unsafe impl Send for Subsystem {}
 
-impl<A, G, C> Subsystem<A, G, C>
-where
-    A: AttributeOperations<C>,
-    G: GroupOperations,
-    C: HasGroup,
+impl Subsystem
 {
-    pub fn new(
+    pub fn new<G, C>(
         name: &'static CStr,
         owner: &ThisModule,
-        tpe: &'static ItemType<A, G, C>,
-    ) -> impl PinInit<Self, Error> {
+        tpe: &'static ItemType<G, C>,
+    ) -> impl PinInit<Self, Error>
+where
+    G: GroupOperations,
+    C: HasGroup,
+    {
         try_pin_init!(Self {
             subsystem <- Opaque::try_ffi_init(|place: *mut bindings::configfs_subsystem| {
                 unsafe {addr_of_mut!((*place).su_group.cg_item.ci_name ).write(name.as_ptr() as _) };
@@ -34,7 +33,6 @@ where
                 unsafe { bindings::config_group_init(&mut (*place).su_group) };
                 crate::error::to_result( unsafe {bindings::configfs_register_subsystem(place)} )
             }),
-            _p: PhantomData,
         })
     }
 }
@@ -91,7 +89,7 @@ pub trait GroupOperations {
     fn drop_item();
 }
 
-#[repr(transparent)]
+#[repr(C)]
 pub struct Attribute<AO, HG> {
     attribute: Opaque<bindings::configfs_attribute>,
     _p: PhantomData<(AO, HG)>,
@@ -139,7 +137,7 @@ where
                     ca_owner: core::ptr::null_mut(),
                     ca_mode: 0o660,
                     show: Some(Self::show),
-                    store: None,
+                    store: Some(Self::store),
                 })
             },
             _p: PhantomData,
@@ -147,12 +145,12 @@ where
     }
 }
 
-pub trait AttributeOperations<O>
+pub trait AttributeOperations<AO>
 where
-    O: HasGroup,
+    AO: HasGroup,
 {
-    fn show(container: &O, page: &mut [u8; 4096]) -> isize;
-    fn store(container: &O, page: &[u8]) -> isize;
+    fn show(container: &AO, page: &mut [u8; 4096]) -> isize;
+    fn store(container: &AO, page: &[u8]) -> isize;
 }
 
 #[repr(transparent)]
@@ -161,19 +159,18 @@ unsafe impl<const N: usize> Send for AttributeList<N> {}
 unsafe impl<const N: usize> Sync for AttributeList<N> {}
 
 #[pin_data]
-pub struct ItemType<AO, GO, HG> {
+pub struct ItemType<GO, HG> {
     #[pin]
     item_type: Opaque<bindings::config_item_type>,
-    _p: PhantomData<(AO, GO, HG)>,
+    _p: PhantomData<(GO, HG)>,
 }
 
-unsafe impl<AO, GO, HG> Sync for ItemType<AO, GO, HG> {}
+unsafe impl<GO, HG> Sync for ItemType<GO, HG> {}
 
-unsafe impl<AO, GO, HG> Send for ItemType<AO, GO, HG> {}
+unsafe impl<GO, HG> Send for ItemType<GO, HG> {}
 
-impl<AO, GO, HG> ItemType<AO, GO, HG>
+impl<GO, HG> ItemType<GO, HG>
 where
-    AO: AttributeOperations<HG>,
     GO: GroupOperations,
     HG: HasGroup,
 {
