@@ -105,7 +105,7 @@ unsafe impl configfs::HasGroup for RustConfigfs {
 #[pin_data]
 struct Child {
     #[pin]
-    group: configfs::Group,
+    group: configfs::Group<Self>,
 }
 
 impl Child {

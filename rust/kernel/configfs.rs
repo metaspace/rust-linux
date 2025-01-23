@@ -36,17 +36,22 @@ impl Subsystem {
 
 #[pin_data]
 #[repr(transparent)]
-pub struct Group {
+pub struct Group<C> {
     #[pin]
     group: Opaque<bindings::config_group>,
+    _p: PhantomData<C>,
 }
 
-impl Group {
-    pub fn new(name: CString, tpe: &'static ItemType) -> impl PinInit<Self> + '_{
+impl<C> Group<C>
+where
+    C: 'static,
+{
+    pub fn new(name: CString, tpe: &'static ItemType) -> impl PinInit<Self> + '_ {
         pin_init!(Self {
             group <- Opaque::ffi_init(|place: *mut bindings::config_group| {
                 unsafe { bindings::config_group_init_type_name(place, name.as_ref().as_ptr() as _, tpe.as_ptr()) }
             }),
+            _p: PhantomData,
         })
     }
 }
@@ -65,7 +70,7 @@ where
         parent_group: *mut bindings::config_group,
         name: *const kernel::ffi::c_char,
     ) -> *mut bindings::config_group {
-        let r_group_ptr: *mut Group = parent_group.cast();
+        let r_group_ptr: *mut Group<PAR> = parent_group.cast();
         let container_ptr = unsafe { PAR::container_ptr(r_group_ptr) };
         let container_ref = unsafe { &*container_ptr };
         let child = PAR::make_group(container_ref, unsafe { CStr::from_char_ptr(name) });
@@ -73,7 +78,9 @@ where
         match child {
             Ok(child) => {
                 let child_ptr = child.into_foreign();
-                unsafe {CHLD::group_ptr(child_ptr)}.cast::<bindings::config_group>().cast_mut()
+                unsafe { CHLD::group_ptr(child_ptr) }
+                    .cast::<bindings::config_group>()
+                    .cast_mut()
             }
             Err(e) => e.to_ptr(),
         }
@@ -125,7 +132,7 @@ where
         page: *mut kernel::ffi::c_char,
     ) -> isize {
         let c_group: *mut bindings::config_group = item.cast();
-        let r_group_ptr: *mut Group = c_group.cast();
+        let r_group_ptr: *mut Group<HG> = c_group.cast();
         let container_ptr = unsafe { HG::container_ptr(r_group_ptr) };
         let container_ref = unsafe { &*container_ptr };
         AO::show(container_ref, unsafe { &mut *(page as *mut [u8; 4096]) })
@@ -137,7 +144,7 @@ where
         size: usize,
     ) -> isize {
         let c_group: *mut bindings::config_group = item.cast();
-        let r_group_ptr: *mut Group = c_group.cast();
+        let r_group_ptr: *mut Group<HG> = c_group.cast();
         let container_ptr = unsafe { HG::container_ptr(r_group_ptr) };
         let container_ref = unsafe { &*container_ptr };
         AO::store(container_ref, unsafe {
@@ -219,11 +226,14 @@ impl ItemType {
 
 pub unsafe trait HasGroup {
     const OFFSET: usize;
-    unsafe fn group_ptr(self: *const Self) -> *const Group {
-        unsafe { self.cast::<u8>().add(Self::OFFSET).cast::<Group>() }
+    unsafe fn group_ptr(self: *const Self) -> *const Group<Self>
+    where
+        Self: Sized,
+    {
+        unsafe { self.cast::<u8>().add(Self::OFFSET).cast::<Group<Self>>() }
     }
 
-    unsafe fn container_ptr(group: *mut Group) -> *mut Self
+    unsafe fn container_ptr(group: *mut Group<Self>) -> *mut Self
     where
         Self: Sized,
     {
