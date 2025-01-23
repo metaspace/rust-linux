@@ -2,13 +2,15 @@
 
 //! Rust configfs sample.
 
+use core::marker::PhantomData;
+
+use kernel::alloc::flags;
 use kernel::c_str;
 use kernel::configfs;
 use kernel::configfs::AttributeList;
 use kernel::new_mutex;
 use kernel::prelude::*;
 use kernel::str::CString;
-use kernel::alloc::flags;
 use kernel::sync::Mutex;
 
 module! {
@@ -22,10 +24,10 @@ module! {
 #[pin_data]
 struct RustConfigfs {
     #[pin]
-    config: configfs::Subsystem,
+    config: configfs::Subsystem<Self>,
     foo: &'static CStr,
     #[pin]
-    bar: Mutex<(KBox<[u8;4096]>, usize)>,
+    bar: Mutex<(KBox<[u8; 4096]>, usize)>,
 }
 
 impl kernel::InPlaceModule for RustConfigfs {
@@ -35,13 +37,12 @@ impl kernel::InPlaceModule for RustConfigfs {
             configfs::Attribute::new(c_str!("foo"));
         static BAR_ATTR: configfs::Attribute<BarOps, RustConfigfs> =
             configfs::Attribute::new(c_str!("bar"));
-        static ATTRIBUTES: AttributeList<3> =
-            AttributeList([
-                &FOO_ATTR as *const _ as _,
-                &BAR_ATTR as *const _ as _,
-                core::ptr::null_mut(),
-            ]);
-        static TPE: configfs::ItemType =
+        static ATTRIBUTES: AttributeList<3, RustConfigfs> = AttributeList::new();
+
+        ATTRIBUTES.add::<0,_>(&FOO_ATTR);
+        ATTRIBUTES.add::<1, _>(&BAR_ATTR);
+
+        static TPE: configfs::ItemType<RustConfigfs> =
             configfs::ItemType::new::<3, RustConfigfs, Child>(&ATTRIBUTES);
         try_pin_init!(Self {
             config <- configfs::Subsystem::new(c_str!("rust_configfs"), module, &TPE),
@@ -50,8 +51,6 @@ impl kernel::InPlaceModule for RustConfigfs {
         })
     }
 }
-
-
 
 impl configfs::GroupOperations<RustConfigfs, Child> for RustConfigfs {
     fn make_group(container: &RustConfigfs, name: &CStr) -> Result<Pin<KBox<Child>>> {
@@ -110,20 +109,34 @@ struct Child {
 
 impl Child {
     fn new(name: CString) -> impl PinInit<Self> {
-        static BAZ_ATTR: configfs::Attribute<FooOps, RustConfigfs> =
+        static BAZ_ATTR: configfs::Attribute<BazOps, Child> =
             configfs::Attribute::new(c_str!("baz"));
-        static ATTRIBUTES: AttributeList<2> =
-            AttributeList([
-                &BAZ_ATTR as *const _ as _,
-                core::ptr::null_mut(),
-            ]);
-        static TPE: configfs::ItemType =
-            configfs::ItemType::new2::<2>(&ATTRIBUTES);
+        static ATTRIBUTES: AttributeList<2, Child> = AttributeList::new();
+
+        ATTRIBUTES.add::<0,_>(&BAZ_ATTR);
+
+        static TPE: configfs::ItemType<Child> = configfs::ItemType::new2::<2>(&ATTRIBUTES);
         pin_init!(Self {
             group <- configfs::Group::new(name, &TPE),
         })
     }
 }
+
+struct BazOps;
+
+impl configfs::AttributeOperations<Child> for BazOps {
+    fn show(container: &Child, page: &mut [u8; 4096]) -> isize {
+        pr_info!("Show baz\n");
+        let data = c"Hello Baz\n".to_bytes();
+        page[0..data.len()].copy_from_slice(data);
+        data.len() as _
+    }
+    fn store(container: &Child, page: &[u8]) -> isize {
+        pr_info!("Store baz (not allowed)\n");
+        page.len() as _
+    }
+}
+
 
 unsafe impl configfs::HasGroup for Child {
     const OFFSET: usize = core::mem::offset_of!(Self, group) as usize;

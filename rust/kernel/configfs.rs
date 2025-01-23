@@ -1,3 +1,4 @@
+use core::cell::UnsafeCell;
 use core::ptr::addr_of_mut;
 use core::{array::IntoIter, marker::PhantomData};
 use init::PinnedDrop;
@@ -8,20 +9,20 @@ use crate::types::ForeignOwnable;
 use crate::{prelude::*, types::Opaque};
 
 #[pin_data]
-pub struct Subsystem {
+pub struct Subsystem<C> {
     #[pin]
     subsystem: Opaque<bindings::configfs_subsystem>,
+    _p: PhantomData<C>,
 }
 
-unsafe impl Sync for Subsystem {}
+unsafe impl<C> Sync for Subsystem<C> {}
+unsafe impl<C> Send for Subsystem<C> {}
 
-unsafe impl Send for Subsystem {}
-
-impl Subsystem {
+impl<C> Subsystem<C> {
     pub fn new(
         name: &'static CStr,
         owner: &ThisModule,
-        tpe: &'static ItemType,
+        tpe: &'static ItemType<C>,
     ) -> impl PinInit<Self, Error> {
         try_pin_init!(Self {
             subsystem <- Opaque::try_ffi_init(|place: *mut bindings::configfs_subsystem| {
@@ -30,6 +31,7 @@ impl Subsystem {
                 unsafe { bindings::config_group_init(&mut (*place).su_group) };
                 crate::error::to_result( unsafe {bindings::configfs_register_subsystem(place)} )
             }),
+            _p: PhantomData,
         })
     }
 }
@@ -46,10 +48,13 @@ impl<C> Group<C>
 where
     C: 'static,
 {
-    pub fn new(name: CString, tpe: &'static ItemType) -> impl PinInit<Self> + '_ {
+    pub fn new(name: CString, tpe: &'static ItemType<C>) -> impl PinInit<Self> {
         pin_init!(Self {
-            group <- Opaque::ffi_init(|place: *mut bindings::config_group| {
-                unsafe { bindings::config_group_init_type_name(place, name.as_ref().as_ptr() as _, tpe.as_ptr()) }
+            group <- kernel::init::zeroed().chain(|v: &mut Opaque<bindings::config_group>| {
+                let place = v.get();
+                let name = name.as_bytes_with_nul().as_ptr();
+                unsafe { bindings::config_group_init_type_name(place, name as _, tpe.as_ptr()) }
+                Ok(())
             }),
             _p: PhantomData,
         })
@@ -177,21 +182,35 @@ where
 }
 
 #[repr(transparent)]
-pub struct AttributeList<const N: usize>(pub [*mut kernel::ffi::c_void; N]);
-unsafe impl<const N: usize> Send for AttributeList<N> {}
-unsafe impl<const N: usize> Sync for AttributeList<N> {}
+pub struct AttributeList<const N: usize, C>(UnsafeCell<[*mut kernel::ffi::c_void; N]>,PhantomData<C>)
+where
+    C: HasGroup;
+unsafe impl<const N: usize, C: HasGroup> Send for AttributeList<N, C> {}
+unsafe impl<const N: usize, C: HasGroup> Sync for AttributeList<N, C> {}
 
-#[pin_data]
-pub struct ItemType {
-    #[pin]
-    item_type: Opaque<bindings::config_item_type>,
+impl<const N: usize, C: HasGroup> AttributeList<N, C> {
+    pub const fn new() -> Self {
+        Self(UnsafeCell::new([core::ptr::null_mut(); N]), PhantomData)
+    }
+
+    pub const fn add<const I: usize, O: AttributeOperations<C>>(&'static self, attribute: &'static Attribute<O, C>) {
+        // TODO: bound check for null terminator
+        unsafe {(&mut*self.0.get())[I] = attribute as *const _ as _};
+    }
 }
 
-unsafe impl Sync for ItemType {}
-unsafe impl Send for ItemType {}
+#[pin_data]
+pub struct ItemType<C> {
+    #[pin]
+    item_type: Opaque<bindings::config_item_type>,
+    _p: PhantomData<C>
+}
 
-impl ItemType {
-    pub const fn new<const N: usize, PAR, CHLD>(attributes: &'static AttributeList<N>) -> Self
+unsafe impl<C> Sync for ItemType<C> {}
+unsafe impl<C> Send for ItemType<C> {}
+
+impl<C: HasGroup> ItemType<C> {
+    pub const fn new<const N: usize, PAR, CHLD>(attributes: &'static AttributeList<N, C>) -> Self
     where
         PAR: GroupOperations<PAR, CHLD> + HasGroup,
         CHLD: HasGroup + 'static,
@@ -204,10 +223,11 @@ impl ItemType {
                 ct_attrs: attributes as *const _ as _,
                 ct_bin_attrs: core::ptr::null_mut(),
             }),
+            _p: PhantomData,
         }
     }
 
-    pub const fn new2<const N: usize>(attributes: &'static AttributeList<N>) -> Self {
+    pub const fn new2<const N: usize>(attributes: &'static AttributeList<N, C>) -> Self {
         Self {
             item_type: Opaque::new(bindings::config_item_type {
                 ct_owner: core::ptr::null_mut(),
@@ -216,9 +236,12 @@ impl ItemType {
                 ct_attrs: attributes as *const _ as _,
                 ct_bin_attrs: core::ptr::null_mut(),
             }),
+            _p: PhantomData,
         }
     }
+}
 
+impl<C> ItemType<C> {
     fn as_ptr(&self) -> *const bindings::config_item_type {
         self.item_type.get()
     }
