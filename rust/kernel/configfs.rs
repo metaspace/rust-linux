@@ -2,7 +2,9 @@ use core::ptr::addr_of_mut;
 use core::{array::IntoIter, marker::PhantomData};
 use init::PinnedDrop;
 use kernel::alloc::flags;
+use kernel::str::CString;
 
+use crate::types::ForeignOwnable;
 use crate::{prelude::*, types::Opaque};
 
 #[pin_data]
@@ -15,17 +17,12 @@ unsafe impl Sync for Subsystem {}
 
 unsafe impl Send for Subsystem {}
 
-impl Subsystem
-{
-    pub fn new<G, C>(
+impl Subsystem {
+    pub fn new(
         name: &'static CStr,
         owner: &ThisModule,
-        tpe: &'static ItemType<G, C>,
-    ) -> impl PinInit<Self, Error>
-where
-    G: GroupOperations,
-    C: HasGroup,
-    {
+        tpe: &'static ItemType,
+    ) -> impl PinInit<Self, Error> {
         try_pin_init!(Self {
             subsystem <- Opaque::try_ffi_init(|place: *mut bindings::configfs_subsystem| {
                 unsafe {addr_of_mut!((*place).su_group.cg_item.ci_name ).write(name.as_ptr() as _) };
@@ -45,30 +42,45 @@ pub struct Group {
 }
 
 impl Group {
-    pub fn new() -> impl PinInit<Self> {
+    pub fn new(name: CString, tpe: &'static ItemType) -> impl PinInit<Self> + '_{
         pin_init!(Self {
             group <- Opaque::ffi_init(|place: *mut bindings::config_group| {
-                unsafe { bindings::config_group_init(place) }
+                unsafe { bindings::config_group_init_type_name(place, name.as_ref().as_ptr() as _, tpe.as_ptr()) }
             }),
         })
     }
 }
 
-struct GroupOperationsVTable<T: GroupOperations>(PhantomData<T>);
-
-impl<T> GroupOperationsVTable<T>
+struct GroupOperationsVTable<PAR, CHLD>(PhantomData<(PAR, CHLD)>)
 where
-    T: GroupOperations,
+    PAR: GroupOperations<PAR, CHLD> + HasGroup,
+    CHLD: HasGroup;
+
+impl<PAR, CHLD> GroupOperationsVTable<PAR, CHLD>
+where
+    PAR: GroupOperations<PAR, CHLD> + HasGroup,
+    CHLD: HasGroup + 'static,
 {
     unsafe extern "C" fn make_group(
-        group: *mut bindings::config_group,
+        parent_group: *mut bindings::config_group,
         name: *const kernel::ffi::c_char,
     ) -> *mut bindings::config_group {
-        todo!()
+        let r_group_ptr: *mut Group = parent_group.cast();
+        let container_ptr = unsafe { PAR::container_ptr(r_group_ptr) };
+        let container_ref = unsafe { &*container_ptr };
+        let child = PAR::make_group(container_ref, unsafe { CStr::from_char_ptr(name) });
+
+        match child {
+            Ok(child) => {
+                let child_ptr = child.into_foreign();
+                unsafe {CHLD::group_ptr(child_ptr)}.cast::<bindings::config_group>().cast_mut()
+            }
+            Err(e) => e.to_ptr(),
+        }
     }
 
     unsafe extern "C" fn drop_item(
-        group: *mut bindings::config_group,
+        parent_group: *mut bindings::config_group,
         item: *mut bindings::config_item,
     ) {
         todo!()
@@ -84,9 +96,13 @@ where
     };
 }
 
-pub trait GroupOperations {
-    fn make_group();
-    fn drop_item();
+pub trait GroupOperations<PAR, CHLD>
+where
+    PAR: HasGroup,
+    CHLD: HasGroup,
+{
+    fn make_group(container: &PAR, name: &CStr) -> Result<Pin<KBox<CHLD>>>;
+    fn drop_item(container: &PAR);
 }
 
 #[repr(C)]
@@ -110,7 +126,7 @@ where
     ) -> isize {
         let c_group: *mut bindings::config_group = item.cast();
         let r_group_ptr: *mut Group = c_group.cast();
-        let container_ptr = unsafe {HG::container_ptr(r_group_ptr)};
+        let container_ptr = unsafe { HG::container_ptr(r_group_ptr) };
         let container_ref = unsafe { &*container_ptr };
         AO::show(container_ref, unsafe { &mut *(page as *mut [u8; 4096]) })
     }
@@ -122,7 +138,7 @@ where
     ) -> isize {
         let c_group: *mut bindings::config_group = item.cast();
         let r_group_ptr: *mut Group = c_group.cast();
-        let container_ptr = unsafe {HG::container_ptr(r_group_ptr)};
+        let container_ptr = unsafe { HG::container_ptr(r_group_ptr) };
         let container_ref = unsafe { &*container_ptr };
         AO::store(container_ref, unsafe {
             core::slice::from_raw_parts(page.cast(), size)
@@ -159,31 +175,40 @@ unsafe impl<const N: usize> Send for AttributeList<N> {}
 unsafe impl<const N: usize> Sync for AttributeList<N> {}
 
 #[pin_data]
-pub struct ItemType<GO, HG> {
+pub struct ItemType {
     #[pin]
     item_type: Opaque<bindings::config_item_type>,
-    _p: PhantomData<(GO, HG)>,
 }
 
-unsafe impl<GO, HG> Sync for ItemType<GO, HG> {}
+unsafe impl Sync for ItemType {}
+unsafe impl Send for ItemType {}
 
-unsafe impl<GO, HG> Send for ItemType<GO, HG> {}
-
-impl<GO, HG> ItemType<GO, HG>
-where
-    GO: GroupOperations,
-    HG: HasGroup,
-{
-    pub const fn new<const N: usize>(attributes: &'static AttributeList<N>) -> Self {
+impl ItemType {
+    pub const fn new<const N: usize, PAR, CHLD>(attributes: &'static AttributeList<N>) -> Self
+    where
+        PAR: GroupOperations<PAR, CHLD> + HasGroup,
+        CHLD: HasGroup + 'static,
+    {
         Self {
             item_type: Opaque::new(bindings::config_item_type {
                 ct_owner: core::ptr::null_mut(),
-                ct_group_ops: (&GroupOperationsVTable::<GO>::VTABLE as *const _) as *mut _,
+                ct_group_ops: (&GroupOperationsVTable::<PAR, CHLD>::VTABLE as *const _) as *mut _,
                 ct_item_ops: core::ptr::null_mut(),
                 ct_attrs: attributes as *const _ as _,
                 ct_bin_attrs: core::ptr::null_mut(),
             }),
-            _p: PhantomData,
+        }
+    }
+
+    pub const fn new2<const N: usize>(attributes: &'static AttributeList<N>) -> Self {
+        Self {
+            item_type: Opaque::new(bindings::config_item_type {
+                ct_owner: core::ptr::null_mut(),
+                ct_group_ops: core::ptr::null_mut(),
+                ct_item_ops: core::ptr::null_mut(),
+                ct_attrs: attributes as *const _ as _,
+                ct_bin_attrs: core::ptr::null_mut(),
+            }),
         }
     }
 

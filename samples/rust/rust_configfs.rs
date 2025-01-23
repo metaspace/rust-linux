@@ -32,7 +32,7 @@ impl kernel::InPlaceModule for RustConfigfs {
     fn init(module: &'static ThisModule) -> impl PinInit<Self, Error> {
         pr_info!("Rust configfs sample (init)\n");
         static FOO_ATTR: configfs::Attribute<FooOps, RustConfigfs> =
-            configfs::Attribute::new(c_str!("attr"));
+            configfs::Attribute::new(c_str!("foo"));
         static BAR_ATTR: configfs::Attribute<BarOps, RustConfigfs> =
             configfs::Attribute::new(c_str!("bar"));
         static ATTRIBUTES: AttributeList<3> =
@@ -41,8 +41,8 @@ impl kernel::InPlaceModule for RustConfigfs {
                 &BAR_ATTR as *const _ as _,
                 core::ptr::null_mut(),
             ]);
-        static TPE: configfs::ItemType<RustConfigfs, RustConfigfs> =
-            configfs::ItemType::new(&ATTRIBUTES);
+        static TPE: configfs::ItemType =
+            configfs::ItemType::new::<3, RustConfigfs, Child>(&ATTRIBUTES);
         try_pin_init!(Self {
             config <- configfs::Subsystem::new(c_str!("rust_configfs"), module, &TPE),
             foo: c_str!("Hello World\n"),
@@ -53,9 +53,13 @@ impl kernel::InPlaceModule for RustConfigfs {
 
 
 
-impl configfs::GroupOperations for RustConfigfs {
-    fn make_group() {}
-    fn drop_item() {}
+impl configfs::GroupOperations<RustConfigfs, Child> for RustConfigfs {
+    fn make_group(container: &RustConfigfs, name: &CStr) -> Result<Pin<KBox<Child>>> {
+        let name = name.try_into()?;
+        KBox::pin_init(Child::new(name), flags::GFP_KERNEL)
+    }
+
+    fn drop_item(container: &RustConfigfs) {}
 }
 
 struct FooOps;
@@ -96,4 +100,31 @@ impl configfs::AttributeOperations<RustConfigfs> for BarOps {
 
 unsafe impl configfs::HasGroup for RustConfigfs {
     const OFFSET: usize = core::mem::offset_of!(Self, config) as usize;
+}
+
+#[pin_data]
+struct Child {
+    #[pin]
+    group: configfs::Group,
+}
+
+impl Child {
+    fn new(name: CString) -> impl PinInit<Self> {
+        static BAZ_ATTR: configfs::Attribute<FooOps, RustConfigfs> =
+            configfs::Attribute::new(c_str!("baz"));
+        static ATTRIBUTES: AttributeList<2> =
+            AttributeList([
+                &BAZ_ATTR as *const _ as _,
+                core::ptr::null_mut(),
+            ]);
+        static TPE: configfs::ItemType =
+            configfs::ItemType::new2::<2>(&ATTRIBUTES);
+        pin_init!(Self {
+            group <- configfs::Group::new(name, &TPE),
+        })
+    }
+}
+
+unsafe impl configfs::HasGroup for Child {
+    const OFFSET: usize = core::mem::offset_of!(Self, group) as usize;
 }
