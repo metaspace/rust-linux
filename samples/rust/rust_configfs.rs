@@ -40,6 +40,7 @@ impl kernel::InPlaceModule for RustConfigfs {
         let tpe  = configfs_attrs! {
             container: RustConfigfs,
             child: Child,
+            pointer: Arc<Child>,
             attributes: [
                 foo: FooOps,
                 bar: BarOps,
@@ -55,7 +56,7 @@ impl kernel::InPlaceModule for RustConfigfs {
 }
 
 #[vtable]
-impl configfs::GroupOperations<RustConfigfs, Child> for RustConfigfs {
+impl configfs::GroupOperations<RustConfigfs, Child, Arc<Child>> for RustConfigfs {
     fn make_group(container: &RustConfigfs, name: &CStr) -> Result<Arc<Child>> {
         let name = name.try_into()?;
         Arc::pin_init(Child::new(name), flags::GFP_KERNEL)

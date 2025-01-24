@@ -87,15 +87,17 @@ where
     }
 }
 
-struct GroupOperationsVTable<PAR, CHLD>(PhantomData<(PAR, CHLD)>)
+struct GroupOperationsVTable<PAR, CHLD, CPTR>(PhantomData<(PAR, CHLD, CPTR)>)
 where
-    PAR: GroupOperations<PAR, CHLD> + HasGroup,
-    CHLD: HasGroup;
+    PAR: GroupOperations<PAR, CHLD, CPTR> + HasGroup,
+    CHLD: HasGroup,
+    CPTR: ForeignOwnable<PointedTo = CHLD>;
 
-impl<PAR, CHLD> GroupOperationsVTable<PAR, CHLD>
+impl<PAR, CHLD, CPTR> GroupOperationsVTable<PAR, CHLD, CPTR>
 where
-    PAR: GroupOperations<PAR, CHLD> + HasGroup + 'static,
+    PAR: GroupOperations<PAR, CHLD, CPTR> + HasGroup + 'static,
     CHLD: HasGroup + 'static,
+    CPTR: ForeignOwnable<PointedTo = CHLD>,
 {
     unsafe extern "C" fn make_group(
         parent_group: *mut bindings::config_group,
@@ -108,7 +110,7 @@ where
 
         match child {
             Ok(child) => {
-                let child_ptr = child.into_raw();
+                let child_ptr = child.into_foreign();
                 unsafe { CHLD::group_ptr(child_ptr) }
                     .cast::<bindings::config_group>()
                     .cast_mut()
@@ -128,13 +130,13 @@ where
         let c_group_ptr = unsafe { kernel::container_of!(item, bindings::config_group, cg_item) };
         let r_group_ptr: *mut Group<CHLD> = c_group_ptr.cast::<Group<CHLD>>().cast_mut();
         let container_ptr = unsafe { CHLD::container_ptr(r_group_ptr) };
-        let child: Arc<CHLD> = unsafe { Arc::from_raw(container_ptr) };
 
         if PAR::HAS_DROP_ITEM {
-            PAR::drop_item(parent, child.as_arc_borrow());
+            PAR::drop_item(parent, unsafe { CPTR::borrow(container_ptr) });
         }
 
         unsafe { bindings::config_item_put(item) };
+        let child: CPTR = unsafe { CPTR::from_foreign(container_ptr) };
         drop(child);
     }
 
@@ -149,16 +151,17 @@ where
 }
 
 #[vtable]
-pub trait GroupOperations<PAR, CHLD>
+pub trait GroupOperations<PAR, CHLD, CPTR>
 where
     PAR: HasGroup,
     CHLD: HasGroup,
+    CPTR: ForeignOwnable<PointedTo = CHLD>,
 {
     /// Called by kernel to make a child node.
-    fn make_group(container: &PAR, name: &CStr) -> Result<Arc<CHLD>>;
+    fn make_group(container: &PAR, name: &CStr) -> Result<CPTR>;
 
     /// Called by kernel when a child node is about to be dropped.
-    fn drop_item(this: &PAR, child: ArcBorrow<CHLD>) {
+    fn drop_item(this: &PAR, child: CPTR::Borrowed<'_>) {
         kernel::build_error!(kernel::error::VTABLE_DEFAULT_ERROR)
     }
 }
@@ -253,7 +256,7 @@ impl<const N: usize, C: HasGroup> AttributeList<N, C> {
         &'static self,
         attribute: &'static Attribute<O, C>,
     ) {
-        if I >= N-1 {
+        if I >= N - 1 {
             kernel::build_error("Invalid attribute index");
         }
 
@@ -272,17 +275,19 @@ unsafe impl<C> Sync for ItemType<C> {}
 unsafe impl<C> Send for ItemType<C> {}
 
 impl<C: HasGroup> ItemType<C> {
-    pub const fn new_with_child_ctor<const N: usize, PAR, CHLD>(
+    pub const fn new_with_child_ctor<const N: usize, PAR, CHLD, CPTR>(
         attributes: &'static AttributeList<N, C>,
     ) -> Self
     where
-        PAR: GroupOperations<PAR, CHLD> + HasGroup + 'static,
+        PAR: GroupOperations<PAR, CHLD, CPTR> + HasGroup + 'static,
         CHLD: HasGroup + 'static,
+        CPTR: ForeignOwnable<PointedTo = CHLD>,
     {
         Self {
             item_type: Opaque::new(bindings::config_item_type {
                 ct_owner: core::ptr::null_mut(),
-                ct_group_ops: (&GroupOperationsVTable::<PAR, CHLD>::VTABLE as *const _) as *mut _,
+                ct_group_ops: (&GroupOperationsVTable::<PAR, CHLD, CPTR>::VTABLE as *const _)
+                    as *mut _,
                 ct_item_ops: core::ptr::null_mut(),
                 ct_attrs: attributes as *const _ as _,
                 ct_bin_attrs: core::ptr::null_mut(),
@@ -417,6 +422,7 @@ macro_rules! configfs_attrs {
     (
         container: $container:ty,
         child: $child:ty,
+        pointer: $pointer:ty,
         attributes: [
             $($name:ident: $attr:ty,)+
         ],
@@ -424,7 +430,7 @@ macro_rules! configfs_attrs {
         $crate::configfs_attrs!(
             count:
             @container($container),
-            @child($child),
+            @child($child, $pointer),
             @no_child(),
             @attrs($($name $attr)+),
             @eat($($name $attr,)+),
@@ -434,7 +440,7 @@ macro_rules! configfs_attrs {
     };
     (count:
      @container($container:ty),
-     @child($($child:ty)?),
+     @child($($child:ty, $pointer:ty)?),
      @no_child($($no_child:ident)?),
      @attrs($($aname:ident $aattr:ty)+),
      @eat($name:ident $attr:ty, $($rname:ident $rattr:ty,)*),
@@ -443,7 +449,7 @@ macro_rules! configfs_attrs {
     ) => {
         $crate::configfs_attrs!(count:
                                 @container($container),
-                                @child($($child)?),
+                                @child($($child, $pointer)?),
                                 @no_child($($no_child)?),
                                 @attrs($($aname $aattr)+),
                                 @eat($($rname $rattr,)*),
@@ -456,7 +462,7 @@ macro_rules! configfs_attrs {
     };
     (count:
      @container($container:ty),
-     @child($($child:ty)?),
+     @child($($child:ty, $pointer:ty)?),
      @no_child($($no_child:ident)?),
      @attrs($($aname:ident $aattr:ty)+),
      @eat(),
@@ -466,7 +472,7 @@ macro_rules! configfs_attrs {
     {
         $crate::configfs_attrs!(final:
                                 @container($container),
-                                @child($($child)?),
+                                @child($($child, $pointer)?),
                                 @no_child($($no_child)?),
                                 @attrs($($aname $aattr)+),
                                 @assign($($assign)*),
@@ -475,7 +481,7 @@ macro_rules! configfs_attrs {
     };
     (final:
      @container($container:ty),
-     @child($($child:ty)?),
+     @child($($child:ty, $pointer:ty)?),
      @no_child($($no_child:ident)?),
      @attrs($($name:ident $attr:ty)+),
      @assign($($assign:block)+),
@@ -513,7 +519,7 @@ macro_rules! configfs_attrs {
             $(
                 $crate::macros::paste!{
                     static [< $container:upper _TPE >] : $crate::configfs::ItemType<$container>  =
-                        $crate::configfs::ItemType::new_with_child_ctor::<N, $container, $child>(&  [<$ container:upper _ATTRS >] );
+                        $crate::configfs::ItemType::new_with_child_ctor::<N, $container, $child, $pointer>(&  [<$ container:upper _ATTRS >] );
                 }
             )?
 
