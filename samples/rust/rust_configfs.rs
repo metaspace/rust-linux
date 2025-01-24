@@ -8,6 +8,7 @@ use kernel::alloc::flags;
 use kernel::c_str;
 use kernel::configfs;
 use kernel::configfs::AttributeList;
+use kernel::impl_has_group;
 use kernel::new_mutex;
 use kernel::prelude::*;
 use kernel::str::CString;
@@ -44,6 +45,15 @@ impl kernel::InPlaceModule for RustConfigfs {
 
         static TPE: configfs::ItemType<RustConfigfs> =
             configfs::ItemType::new::<3, RustConfigfs, Child>(&ATTRIBUTES);
+
+        // static TPE: configfs::ItemType<RustConfigfs> = configfs! {
+        //     container: RustConfigfs,
+        //     attributes: [
+        //         foo: FooOps,
+        //         bar: BarOps,
+        //     ],
+        // };
+
         try_pin_init!(Self {
             config <- configfs::Subsystem::new(c_str!("rust_configfs"), module, &TPE),
             foo: c_str!("Hello World\n"),
@@ -97,8 +107,8 @@ impl configfs::AttributeOperations<RustConfigfs> for BarOps {
     }
 }
 
-unsafe impl configfs::HasGroup for RustConfigfs {
-    const OFFSET: usize = core::mem::offset_of!(Self, config) as usize;
+kernel::impl_has_subsystem! {
+    impl HasGroup for RustConfigfs { self.config }
 }
 
 #[pin_data]
@@ -138,6 +148,6 @@ impl configfs::AttributeOperations<Child> for BazOps {
 }
 
 
-unsafe impl configfs::HasGroup for Child {
-    const OFFSET: usize = core::mem::offset_of!(Self, group) as usize;
+kernel::impl_has_group! {
+    impl HasGroup for Child { self.group }
 }

@@ -1,6 +1,19 @@
+// SPDX-License-Identifier: GPL-2.0
+
+//! Configfs interface.
+//!
+//! Features not covered:
+//!
+//! - Items. All group children are groups.
+//! - Symlink support.
+//! - `disconnect_notify` hook.
+//! - Item `release` hook
+//!
+
 use core::cell::UnsafeCell;
 use core::ops::Deref;
 use core::ptr::addr_of_mut;
+use core::ptr::addr_of;
 use core::{array::IntoIter, marker::PhantomData};
 use init::PinnedDrop;
 use kernel::alloc::flags;
@@ -10,6 +23,7 @@ use crate::types::ForeignOwnable;
 use crate::{prelude::*, types::Opaque};
 
 #[pin_data]
+#[repr(transparent)]
 pub struct Subsystem<C> {
     #[pin]
     subsystem: Opaque<bindings::configfs_subsystem>,
@@ -34,6 +48,11 @@ impl<C> Subsystem<C> {
             }),
             _p: PhantomData,
         })
+    }
+
+    pub unsafe fn group_ptr(self: *const Self) -> *const Group<C> {
+        let subsystem = self.cast::<bindings::configfs_subsystem>();
+        unsafe {addr_of!((*subsystem).su_group)}.cast()
     }
 }
 
@@ -285,18 +304,64 @@ pub unsafe trait HasGroup {
     }
 }
 
-// #[pin_data]
-// struct Item {
-//     #[pin]
-//     item: Opaque<bindings::config_item>,
-// }
+/// Use to implement the [`HasGroup<T>`] trait.
+#[macro_export]
+macro_rules! impl_has_group {
+    (
+        impl$({$($generics:tt)*})?
+            HasGroup
+            for $self:ty
+        { self.$field:ident }
+        $($rest:tt)*
+    ) => {
+        // SAFETY: This implementation of `group_ptr` only compiles if the
+        // field has the right type.
+        unsafe impl$(<$($generics)*>)? $crate::configfs::HasGroup for $self {
+            const OFFSET: usize = ::core::mem::offset_of!(Self, $field) as usize;
 
-// impl Item {
-//     fn new(name: &str) -> impl PinInit<Self> {
-//         pin_init!(Self {
-//             item <- Opaque::ffi_init(|place| {
-//                 todo!()
-//             })
-//         })
-//     }
-// }
+            #[inline]
+            unsafe fn group_ptr(self: *const Self) ->
+                *const $crate::configfs::Group<Self>
+            {
+                // SAFETY: The caller promises that the pointer is not dangling.
+                unsafe {
+                    ::core::ptr::addr_of!((*self).$field)
+                }
+            }
+        }
+    }
+}
+
+/// Use to implement the [`HasGroup<T>`] trait.
+#[macro_export]
+macro_rules! impl_has_subsystem {
+    (
+        impl$({$($generics:tt)*})?
+            HasGroup
+            for $self:ty
+        { self.$field:ident }
+        $($rest:tt)*
+    ) => {
+        // SAFETY: This implementation of `group_ptr` only compiles if the
+        // field has the right type.
+        unsafe impl$(<$($generics)*>)? $crate::configfs::HasGroup for $self {
+            const OFFSET: usize = ::core::mem::offset_of!(Self, $field) as usize;
+
+            #[inline]
+            unsafe fn group_ptr(self: *const Self) ->
+                *const $crate::configfs::Group<Self>
+            {
+
+                // SAFETY: The caller promises that the pointer is not dangling.
+                let subsystem: *const $crate::configfs::Subsystem<Self> = unsafe {
+                    ::core::ptr::addr_of!((*self).$field)
+                };
+
+                // SAFETY: The caller promises that the pointer is not dangling.
+                unsafe {
+                    ::kernel::configfs::Subsystem::<Self>::group_ptr(subsystem)
+                }
+            }
+        }
+    }
+}
