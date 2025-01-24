@@ -56,7 +56,7 @@ impl<C> Subsystem<C> {
 
     pub unsafe fn group_ptr(self: *const Self) -> *const Group<C> {
         let subsystem = self.cast::<bindings::configfs_subsystem>();
-        unsafe {addr_of!((*subsystem).su_group)}.cast()
+        unsafe { addr_of!((*subsystem).su_group) }.cast()
     }
 }
 
@@ -128,7 +128,10 @@ where
         let container_ptr = unsafe { CHLD::container_ptr(r_group_ptr) };
         let child: KBox<CHLD> = unsafe { KBox::from_foreign(container_ptr) };
 
-        PAR::drop_item(parent, child.deref());
+        if PAR::HAS_DROP_ITEM {
+            PAR::drop_item(parent, child.deref());
+        }
+
         unsafe { bindings::config_item_put(item) };
         drop(child);
     }
@@ -143,6 +146,7 @@ where
     };
 }
 
+#[vtable]
 pub trait GroupOperations<PAR, CHLD>
 where
     PAR: HasGroup,
@@ -152,7 +156,9 @@ where
     fn make_group(container: &PAR, name: &CStr) -> Result<Pin<KBox<CHLD>>>;
 
     /// Called by kernel when a child node is about to be dropped.
-    fn drop_item(this: &PAR, child: &CHLD);
+    fn drop_item(this: &PAR, child: &CHLD) {
+        kernel::build_error!(kernel::error::VTABLE_DEFAULT_ERROR)
+    }
 }
 
 #[repr(C)]
@@ -203,7 +209,11 @@ where
                     ca_owner: core::ptr::null_mut(),
                     ca_mode: 0o660,
                     show: Some(Self::show),
-                    store: Some(Self::store),
+                    store: if AO::HAS_STORE {
+                        Some(Self::store)
+                    } else {
+                        None
+                    },
                 })
             },
             _p: PhantomData,
@@ -211,12 +221,15 @@ where
     }
 }
 
+#[vtable]
 pub trait AttributeOperations<AO>
 where
     AO: HasGroup,
 {
     fn show(container: &AO, page: &mut [u8; 4096]) -> isize;
-    fn store(container: &AO, page: &[u8]) -> isize;
+    fn store(container: &AO, page: &[u8]) -> isize {
+        kernel::build_error!(kernel::error::VTABLE_DEFAULT_ERROR)
+    }
 }
 
 #[repr(transparent)]
@@ -257,7 +270,9 @@ unsafe impl<C> Sync for ItemType<C> {}
 unsafe impl<C> Send for ItemType<C> {}
 
 impl<C: HasGroup> ItemType<C> {
-    pub const fn new_with_child_ctor<const N: usize, PAR, CHLD>(attributes: &'static AttributeList<N, C>) -> Self
+    pub const fn new_with_child_ctor<const N: usize, PAR, CHLD>(
+        attributes: &'static AttributeList<N, C>,
+    ) -> Self
     where
         PAR: GroupOperations<PAR, CHLD> + HasGroup + 'static,
         CHLD: HasGroup + 'static,

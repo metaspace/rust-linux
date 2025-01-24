@@ -53,17 +53,17 @@ impl kernel::InPlaceModule for RustConfigfs {
     }
 }
 
+#[vtable]
 impl configfs::GroupOperations<RustConfigfs, Child> for RustConfigfs {
     fn make_group(container: &RustConfigfs, name: &CStr) -> Result<Pin<KBox<Child>>> {
         let name = name.try_into()?;
         KBox::pin_init(Child::new(name), flags::GFP_KERNEL)
     }
-
-    fn drop_item(container: &RustConfigfs, child: &Child) {}
 }
 
 struct FooOps;
 
+#[vtable]
 impl configfs::AttributeOperations<RustConfigfs> for FooOps {
     fn show(container: &RustConfigfs, page: &mut [u8; 4096]) -> isize {
         pr_info!("Show foo\n");
@@ -71,14 +71,11 @@ impl configfs::AttributeOperations<RustConfigfs> for FooOps {
         page[0..data.len()].copy_from_slice(data);
         data.len() as _
     }
-    fn store(container: &RustConfigfs, page: &[u8]) -> isize {
-        pr_info!("Store foo (not allowed)\n");
-        page.len() as _
-    }
 }
 
 struct BarOps;
 
+#[vtable]
 impl configfs::AttributeOperations<RustConfigfs> for BarOps {
     fn show(container: &RustConfigfs, page: &mut [u8; 4096]) -> isize {
         pr_info!("Show bar\n");
@@ -126,6 +123,7 @@ impl Child {
 
 struct BazOps;
 
+#[vtable]
 impl configfs::AttributeOperations<Child> for BazOps {
     fn show(container: &Child, page: &mut [u8; 4096]) -> isize {
         pr_info!("Show baz\n");
