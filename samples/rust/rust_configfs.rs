@@ -8,6 +8,7 @@ use kernel::alloc::flags;
 use kernel::c_str;
 use kernel::configfs;
 use kernel::configfs::AttributeList;
+use kernel::configfs_attrs;
 use kernel::impl_has_group;
 use kernel::new_mutex;
 use kernel::prelude::*;
@@ -34,28 +35,18 @@ struct RustConfigfs {
 impl kernel::InPlaceModule for RustConfigfs {
     fn init(module: &'static ThisModule) -> impl PinInit<Self, Error> {
         pr_info!("Rust configfs sample (init)\n");
-        static FOO_ATTR: configfs::Attribute<FooOps, RustConfigfs> =
-            configfs::Attribute::new(c_str!("foo"));
-        static BAR_ATTR: configfs::Attribute<BarOps, RustConfigfs> =
-            configfs::Attribute::new(c_str!("bar"));
-        static ATTRIBUTES: AttributeList<3, RustConfigfs> = AttributeList::new();
 
-        ATTRIBUTES.add::<0,_>(&FOO_ATTR);
-        ATTRIBUTES.add::<1, _>(&BAR_ATTR);
-
-        static TPE: configfs::ItemType<RustConfigfs> =
-            configfs::ItemType::new::<3, RustConfigfs, Child>(&ATTRIBUTES);
-
-        // static TPE: configfs::ItemType<RustConfigfs> = configfs! {
-        //     container: RustConfigfs,
-        //     attributes: [
-        //         foo: FooOps,
-        //         bar: BarOps,
-        //     ],
-        // };
+        let tpe  = configfs_attrs! {
+            container: RustConfigfs,
+            child: Child,
+            attributes: [
+                foo: FooOps,
+                bar: BarOps,
+            ],
+        };
 
         try_pin_init!(Self {
-            config <- configfs::Subsystem::new(c_str!("rust_configfs"), module, &TPE),
+            config <- configfs::Subsystem::new(c_str!("rust_configfs"), module, tpe),
             foo: c_str!("Hello World\n"),
             bar <- new_mutex!((KBox::new([0;4096], flags::GFP_KERNEL)?,0)),
         })
@@ -119,15 +110,16 @@ struct Child {
 
 impl Child {
     fn new(name: CString) -> impl PinInit<Self> {
-        static BAZ_ATTR: configfs::Attribute<BazOps, Child> =
-            configfs::Attribute::new(c_str!("baz"));
-        static ATTRIBUTES: AttributeList<2, Child> = AttributeList::new();
 
-        ATTRIBUTES.add::<0,_>(&BAZ_ATTR);
+        let tpe = configfs_attrs!{
+            container: Child,
+            attributes: [
+                baz: BazOps,
+            ],
+        };
 
-        static TPE: configfs::ItemType<Child> = configfs::ItemType::new2::<2>(&ATTRIBUTES);
         pin_init!(Self {
-            group <- configfs::Group::new(name, &TPE),
+            group <- configfs::Group::new(name, tpe),
         })
     }
 }

@@ -250,7 +250,7 @@ unsafe impl<C> Sync for ItemType<C> {}
 unsafe impl<C> Send for ItemType<C> {}
 
 impl<C: HasGroup> ItemType<C> {
-    pub const fn new<const N: usize, PAR, CHLD>(attributes: &'static AttributeList<N, C>) -> Self
+    pub const fn new_with_child_ctor<const N: usize, PAR, CHLD>(attributes: &'static AttributeList<N, C>) -> Self
     where
         PAR: GroupOperations<PAR, CHLD> + HasGroup + 'static,
         CHLD: HasGroup + 'static,
@@ -267,7 +267,7 @@ impl<C: HasGroup> ItemType<C> {
         }
     }
 
-    pub const fn new2<const N: usize>(attributes: &'static AttributeList<N, C>) -> Self {
+    pub const fn new<const N: usize>(attributes: &'static AttributeList<N, C>) -> Self {
         Self {
             item_type: Opaque::new(bindings::config_item_type {
                 ct_owner: core::ptr::null_mut(),
@@ -304,7 +304,7 @@ pub unsafe trait HasGroup {
     }
 }
 
-/// Use to implement the [`HasGroup<T>`] trait.
+/// Use to implement the [`HasGroup<T>`] trait for types that embed a [`Group`].
 #[macro_export]
 macro_rules! impl_has_group {
     (
@@ -332,7 +332,7 @@ macro_rules! impl_has_group {
     }
 }
 
-/// Use to implement the [`HasGroup<T>`] trait.
+/// Use to implement the [`HasGroup<T>`] trait for types that embed a [`Subsystem`].
 #[macro_export]
 macro_rules! impl_has_subsystem {
     (
@@ -364,4 +364,137 @@ macro_rules! impl_has_subsystem {
             }
         }
     }
+}
+
+macro_rules! count {
+    () => (0usize);
+    ($x:ident, $($xs:tt)* ) => (1usize + count!($($xs)*));
+}
+
+#[macro_export]
+macro_rules! configfs_attrs {
+    (
+        container: $container:ty,
+        attributes: [
+            $($name:ident: $attr:ty,)+
+        ],
+    ) => {
+        $crate::configfs_attrs!(
+            count:
+            @container($container),
+            @child(),
+            @no_child(x),
+            @attrs($($name $attr)+),
+            @eat($($name $attr,)+),
+            @assign(),
+            @cnt(0usize),
+        )
+    };
+    (
+        container: $container:ty,
+        child: $child:ty,
+        attributes: [
+            $($name:ident: $attr:ty,)+
+        ],
+    ) => {
+        $crate::configfs_attrs!(
+            count:
+            @container($container),
+            @child($child),
+            @no_child(),
+            @attrs($($name $attr)+),
+            @eat($($name $attr,)+),
+            @assign(),
+            @cnt(0usize),
+        )
+    };
+    (count:
+     @container($container:ty),
+     @child($($child:ty)?),
+     @no_child($($no_child:ident)?),
+     @attrs($($aname:ident $aattr:ty)+),
+     @eat($name:ident $attr:ty, $($rname:ident $rattr:ty,)*),
+     @assign($($assign:block)*),
+     @cnt($cnt:expr),
+    ) => {
+        $crate::configfs_attrs!(count:
+                                @container($container),
+                                @child($($child)?),
+                                @no_child($($no_child)?),
+                                @attrs($($aname $aattr)+),
+                                @eat($($rname $rattr,)*),
+                                @assign($($assign)* {
+                                    const N: usize = $cnt;
+                                    $crate::macros::paste!( [< $container:upper _ATTRS >]).add::<N, _>(& $crate::macros::paste!( [< $container:upper _ $name:upper _ATTR >]));
+                                }),
+                                @cnt(1usize + $cnt),
+        )
+    };
+    (count:
+     @container($container:ty),
+     @child($($child:ty)?),
+     @no_child($($no_child:ident)?),
+     @attrs($($aname:ident $aattr:ty)+),
+     @eat(),
+     @assign($($assign:block)*),
+     @cnt($cnt:expr),
+    ) =>
+    {
+        $crate::configfs_attrs!(final:
+                                @container($container),
+                                @child($($child)?),
+                                @no_child($($no_child)?),
+                                @attrs($($aname $aattr)+),
+                                @assign($($assign)*),
+                                @cnt($cnt),
+        )
+    };
+    (final:
+     @container($container:ty),
+     @child($($child:ty)?),
+     @no_child($($no_child:ident)?),
+     @attrs($($name:ident $attr:ty)+),
+     @assign($($assign:block)+),
+     @cnt($cnt:expr),
+    ) =>
+    {
+        {
+            $(
+                $crate::macros::paste!{
+                    static [< $container:upper _ $name:upper _ATTR >] : $crate::configfs::Attribute<$attr, $container>
+                        = $crate::configfs::Attribute::new(c_str!(::core::stringify!($name)));
+                }
+            )+
+
+
+                const N: usize = $cnt + 1usize;
+            $crate::macros::paste!{
+                static [< $container:upper _ATTRS >] : $crate::configfs::AttributeList<N, $container> =
+                    $crate::configfs::AttributeList::new();
+            }
+
+            $($assign)+
+
+            $(
+                $crate::macros::paste!{
+                    const [<$no_child:upper>]: bool = true;
+                };
+
+                $crate::macros::paste!{
+                    static [< $container:upper _TPE >] : $crate::configfs::ItemType<$container>  =
+                        $crate::configfs::ItemType::new::<N>(&  [<$ container:upper _ATTRS >] );
+                }
+            )?
+
+            $(
+                $crate::macros::paste!{
+                    static [< $container:upper _TPE >] : $crate::configfs::ItemType<$container>  =
+                        $crate::configfs::ItemType::new_with_child_ctor::<N, $container, $child>(&  [<$ container:upper _ATTRS >] );
+                }
+            )?
+
+            &$crate::macros::paste!( [< $container:upper _TPE >] )
+        }
+    };
+
 }
