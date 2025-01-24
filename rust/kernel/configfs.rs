@@ -95,7 +95,13 @@ where
         parent_group: *mut bindings::config_group,
         item: *mut bindings::config_item,
     ) {
-        todo!()
+        let c_group_ptr = unsafe {kernel::container_of!(item, bindings::config_group, cg_item)};
+        let r_group_ptr: *mut Group<PAR> = parent_group.cast();
+        let container_ptr = unsafe { PAR::container_ptr(r_group_ptr) };
+        let bx = KBox::from_foreign(container_ptr).;
+
+        PAR::drop_item(container_ref);
+        unsafe { bindings::config_item_put(item) };
     }
 
     const VTABLE: bindings::configfs_group_operations = bindings::configfs_group_operations {
@@ -113,6 +119,7 @@ where
     PAR: HasGroup,
     CHLD: HasGroup,
 {
+    // TODO: Should probably be an Arc or Pin<Deref<Target = CHLD>>
     fn make_group(container: &PAR, name: &CStr) -> Result<Pin<KBox<CHLD>>>;
     fn drop_item(container: &PAR);
 }
@@ -182,7 +189,10 @@ where
 }
 
 #[repr(transparent)]
-pub struct AttributeList<const N: usize, C>(UnsafeCell<[*mut kernel::ffi::c_void; N]>,PhantomData<C>)
+pub struct AttributeList<const N: usize, C>(
+    UnsafeCell<[*mut kernel::ffi::c_void; N]>,
+    PhantomData<C>,
+)
 where
     C: HasGroup;
 unsafe impl<const N: usize, C: HasGroup> Send for AttributeList<N, C> {}
@@ -193,9 +203,12 @@ impl<const N: usize, C: HasGroup> AttributeList<N, C> {
         Self(UnsafeCell::new([core::ptr::null_mut(); N]), PhantomData)
     }
 
-    pub const fn add<const I: usize, O: AttributeOperations<C>>(&'static self, attribute: &'static Attribute<O, C>) {
+    pub const fn add<const I: usize, O: AttributeOperations<C>>(
+        &'static self,
+        attribute: &'static Attribute<O, C>,
+    ) {
         // TODO: bound check for null terminator
-        unsafe {(&mut*self.0.get())[I] = attribute as *const _ as _};
+        unsafe { (&mut *self.0.get())[I] = attribute as *const _ as _ };
     }
 }
 
@@ -203,7 +216,7 @@ impl<const N: usize, C: HasGroup> AttributeList<N, C> {
 pub struct ItemType<C> {
     #[pin]
     item_type: Opaque<bindings::config_item_type>,
-    _p: PhantomData<C>
+    _p: PhantomData<C>,
 }
 
 unsafe impl<C> Sync for ItemType<C> {}
