@@ -9,11 +9,15 @@
 //! - `disconnect_notify` hook.
 //! - Item `release` hook
 //!
+//! See [the samples folder] for an example.
+//!
+//! [the samples folder]: srctree/samples/rust/rust_configfs.rs
+//!
 
 use core::cell::UnsafeCell;
 use core::ops::Deref;
-use core::ptr::addr_of_mut;
 use core::ptr::addr_of;
+use core::ptr::addr_of_mut;
 use core::{array::IntoIter, marker::PhantomData};
 use init::PinnedDrop;
 use kernel::alloc::flags;
