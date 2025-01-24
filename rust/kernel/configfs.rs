@@ -22,6 +22,8 @@ use core::{array::IntoIter, marker::PhantomData};
 use init::PinnedDrop;
 use kernel::alloc::flags;
 use kernel::str::CString;
+use kernel::sync::Arc;
+use kernel::sync::ArcBorrow;
 
 use crate::types::ForeignOwnable;
 use crate::{prelude::*, types::Opaque};
@@ -106,7 +108,7 @@ where
 
         match child {
             Ok(child) => {
-                let child_ptr = child.into_foreign();
+                let child_ptr = child.into_raw();
                 unsafe { CHLD::group_ptr(child_ptr) }
                     .cast::<bindings::config_group>()
                     .cast_mut()
@@ -126,10 +128,10 @@ where
         let c_group_ptr = unsafe { kernel::container_of!(item, bindings::config_group, cg_item) };
         let r_group_ptr: *mut Group<CHLD> = c_group_ptr.cast::<Group<CHLD>>().cast_mut();
         let container_ptr = unsafe { CHLD::container_ptr(r_group_ptr) };
-        let child: KBox<CHLD> = unsafe { KBox::from_foreign(container_ptr) };
+        let child: Arc<CHLD> = unsafe { Arc::from_raw(container_ptr) };
 
         if PAR::HAS_DROP_ITEM {
-            PAR::drop_item(parent, child.deref());
+            PAR::drop_item(parent, child.as_arc_borrow());
         }
 
         unsafe { bindings::config_item_put(item) };
@@ -153,10 +155,10 @@ where
     CHLD: HasGroup,
 {
     /// Called by kernel to make a child node.
-    fn make_group(container: &PAR, name: &CStr) -> Result<Pin<KBox<CHLD>>>;
+    fn make_group(container: &PAR, name: &CStr) -> Result<Arc<CHLD>>;
 
     /// Called by kernel when a child node is about to be dropped.
-    fn drop_item(this: &PAR, child: &CHLD) {
+    fn drop_item(this: &PAR, child: ArcBorrow<CHLD>) {
         kernel::build_error!(kernel::error::VTABLE_DEFAULT_ERROR)
     }
 }

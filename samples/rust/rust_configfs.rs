@@ -14,6 +14,7 @@ use kernel::new_mutex;
 use kernel::prelude::*;
 use kernel::str::CString;
 use kernel::sync::Mutex;
+use kernel::sync::Arc;
 
 module! {
     type: RustConfigfs,
@@ -55,9 +56,9 @@ impl kernel::InPlaceModule for RustConfigfs {
 
 #[vtable]
 impl configfs::GroupOperations<RustConfigfs, Child> for RustConfigfs {
-    fn make_group(container: &RustConfigfs, name: &CStr) -> Result<Pin<KBox<Child>>> {
+    fn make_group(container: &RustConfigfs, name: &CStr) -> Result<Arc<Child>> {
         let name = name.try_into()?;
-        KBox::pin_init(Child::new(name), flags::GFP_KERNEL)
+        Arc::pin_init(Child::new(name), flags::GFP_KERNEL)
     }
 }
 
