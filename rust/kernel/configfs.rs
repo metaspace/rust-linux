@@ -234,7 +234,10 @@ impl<const N: usize, C: HasGroup> AttributeList<N, C> {
         &'static self,
         attribute: &'static Attribute<O, C>,
     ) {
-        // TODO: bound check for null terminator
+        if I >= N-1 {
+            kernel::build_error("Invalid attribute index");
+        }
+
         unsafe { (&mut *self.0.get())[I] = attribute as *const _ as _ };
     }
 }
