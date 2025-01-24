@@ -1,4 +1,5 @@
 use core::cell::UnsafeCell;
+use core::ops::Deref;
 use core::ptr::addr_of_mut;
 use core::{array::IntoIter, marker::PhantomData};
 use init::PinnedDrop;
@@ -68,7 +69,7 @@ where
 
 impl<PAR, CHLD> GroupOperationsVTable<PAR, CHLD>
 where
-    PAR: GroupOperations<PAR, CHLD> + HasGroup,
+    PAR: GroupOperations<PAR, CHLD> + HasGroup + 'static,
     CHLD: HasGroup + 'static,
 {
     unsafe extern "C" fn make_group(
@@ -95,13 +96,18 @@ where
         parent_group: *mut bindings::config_group,
         item: *mut bindings::config_item,
     ) {
-        let c_group_ptr = unsafe {kernel::container_of!(item, bindings::config_group, cg_item)};
         let r_group_ptr: *mut Group<PAR> = parent_group.cast();
         let container_ptr = unsafe { PAR::container_ptr(r_group_ptr) };
-        let bx = KBox::from_foreign(container_ptr).;
+        let parent: &PAR = unsafe { KBox::<PAR>::borrow(container_ptr) };
 
-        PAR::drop_item(container_ref);
+        let c_group_ptr = unsafe { kernel::container_of!(item, bindings::config_group, cg_item) };
+        let r_group_ptr: *mut Group<CHLD> = c_group_ptr.cast::<Group<CHLD>>().cast_mut();
+        let container_ptr = unsafe { CHLD::container_ptr(r_group_ptr) };
+        let child: KBox<CHLD> = unsafe { KBox::from_foreign(container_ptr) };
+
+        PAR::drop_item(parent, child.deref());
         unsafe { bindings::config_item_put(item) };
+        drop(child);
     }
 
     const VTABLE: bindings::configfs_group_operations = bindings::configfs_group_operations {
@@ -119,9 +125,11 @@ where
     PAR: HasGroup,
     CHLD: HasGroup,
 {
-    // TODO: Should probably be an Arc or Pin<Deref<Target = CHLD>>
+    /// Called by kernel to make a child node.
     fn make_group(container: &PAR, name: &CStr) -> Result<Pin<KBox<CHLD>>>;
-    fn drop_item(container: &PAR);
+
+    /// Called by kernel when a child node is about to be dropped.
+    fn drop_item(this: &PAR, child: &CHLD);
 }
 
 #[repr(C)]
@@ -225,7 +233,7 @@ unsafe impl<C> Send for ItemType<C> {}
 impl<C: HasGroup> ItemType<C> {
     pub const fn new<const N: usize, PAR, CHLD>(attributes: &'static AttributeList<N, C>) -> Self
     where
-        PAR: GroupOperations<PAR, CHLD> + HasGroup,
+        PAR: GroupOperations<PAR, CHLD> + HasGroup + 'static,
         CHLD: HasGroup + 'static,
     {
         Self {

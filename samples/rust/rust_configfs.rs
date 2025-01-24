@@ -58,7 +58,7 @@ impl configfs::GroupOperations<RustConfigfs, Child> for RustConfigfs {
         KBox::pin_init(Child::new(name), flags::GFP_KERNEL)
     }
 
-    fn drop_item(container: &RustConfigfs) {}
+    fn drop_item(container: &RustConfigfs, child: &Child) {}
 }
 
 struct FooOps;
