@@ -28,7 +28,7 @@ use kernel::sync::ArcBorrow;
 use crate::types::ForeignOwnable;
 use crate::{prelude::*, types::Opaque};
 
-#[pin_data]
+#[pin_data(PinnedDrop)]
 #[repr(transparent)]
 pub struct Subsystem<C> {
     #[pin]
@@ -59,6 +59,13 @@ impl<C> Subsystem<C> {
     pub unsafe fn group_ptr(self: *const Self) -> *const Group<C> {
         let subsystem = self.cast::<bindings::configfs_subsystem>();
         unsafe { addr_of!((*subsystem).su_group) }.cast()
+    }
+}
+
+#[pinned_drop]
+impl<C> PinnedDrop for Subsystem<C> {
+    fn drop(self: Pin<&mut Self>) {
+        unsafe { bindings::configfs_unregister_subsystem(self.deref().subsystem.get().cast()) };
     }
 }
 
