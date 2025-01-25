@@ -112,6 +112,8 @@ impl Child {
 
         let tpe = configfs_attrs!{
             container: Child,
+            child: GrandChild,
+            pointer: Arc<GrandChild>,
             attributes: [
                 baz: BazOps,
             ],
@@ -120,6 +122,14 @@ impl Child {
         pin_init!(Self {
             group <- configfs::Group::new(name, tpe),
         })
+    }
+}
+
+#[vtable]
+impl configfs::GroupOperations<Child, GrandChild, Arc<GrandChild>> for Child {
+    fn make_group(container: &Child, name: &CStr) -> Result<Arc<GrandChild>> {
+        let name = name.try_into()?;
+        Arc::pin_init(GrandChild::new(name), flags::GFP_KERNEL)
     }
 }
 
@@ -143,3 +153,46 @@ impl configfs::AttributeOperations<Child> for BazOps {
 kernel::impl_has_group! {
     impl HasGroup for Child { self.group }
 }
+
+#[pin_data]
+struct GrandChild {
+    #[pin]
+    group: configfs::Group<Self>,
+}
+
+impl GrandChild {
+    fn new(name: CString) -> impl PinInit<Self> {
+
+        let tpe = configfs_attrs!{
+            container: GrandChild,
+            attributes: [
+                gc: GcOps,
+            ],
+        };
+
+        pin_init!(Self {
+            group <- configfs::Group::new(name, tpe),
+        })
+    }
+}
+
+struct GcOps;
+
+#[vtable]
+impl configfs::AttributeOperations<GrandChild> for GcOps {
+    fn show(container: &GrandChild, page: &mut [u8; 4096]) -> isize {
+        pr_info!("Show baz\n");
+        let data = c"Hello Baz\n".to_bytes();
+        page[0..data.len()].copy_from_slice(data);
+        data.len() as _
+    }
+    fn store(container: &GrandChild, page: &[u8]) -> isize {
+        pr_info!("Store baz (not allowed)\n");
+        page.len() as _
+    }
+}
+
+kernel::impl_has_group! {
+    impl HasGroup for GrandChild { self.group }
+}
+
