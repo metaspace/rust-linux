@@ -13,6 +13,7 @@ use kernel::impl_has_group;
 use kernel::new_mutex;
 use kernel::prelude::*;
 use kernel::str::CString;
+use kernel::sync::ArcBorrow;
 use kernel::sync::Mutex;
 use kernel::sync::Arc;
 
@@ -26,19 +27,38 @@ module! {
 
 #[pin_data]
 struct RustConfigfs {
-    #[pin]
-    config: configfs::Subsystem<Self>,
+    config: configfs::Registration<Configuration>,
+}
+
+#[pin_data]
+struct Configuration {
     foo: &'static CStr,
     #[pin]
     bar: Mutex<(KBox<[u8; 4096]>, usize)>,
+    #[pin]
+    subsystem: configfs::Subsystem<Self>,
 }
+
+impl Configuration {
+    fn new(
+        module: &'static ThisModule,
+        tpe: &'static configfs::ItemType<Self>,
+    ) -> impl PinInit<Self, Error> {
+        try_pin_init!(Self {
+            subsystem <- configfs::Subsystem::new(c_str!("rust_configfs"), module, tpe),
+            foo: c_str!("Hello World\n"),
+            bar <- new_mutex!((KBox::new([0;4096], flags::GFP_KERNEL)?,0)),
+        })
+    }
+}
+
 
 impl kernel::InPlaceModule for RustConfigfs {
     fn init(module: &'static ThisModule) -> impl PinInit<Self, Error> {
         pr_info!("Rust configfs sample (init)\n");
 
         let tpe  = configfs_attrs! {
-            container: RustConfigfs,
+            container: Configuration,
             child: Child,
             pointer: Arc<Child>,
             attributes: [
@@ -48,16 +68,14 @@ impl kernel::InPlaceModule for RustConfigfs {
         };
 
         try_pin_init!(Self {
-            config <- configfs::Subsystem::new(c_str!("rust_configfs"), module, tpe),
-            foo: c_str!("Hello World\n"),
-            bar <- new_mutex!((KBox::new([0;4096], flags::GFP_KERNEL)?,0)),
+            config: configfs::Registration::<Configuration>::new(Configuration::new(module, tpe))?,
         })
     }
 }
 
 #[vtable]
-impl configfs::GroupOperations<RustConfigfs, Child, Arc<Child>> for RustConfigfs {
-    fn make_group(container: &RustConfigfs, name: &CStr) -> Result<Arc<Child>> {
+impl configfs::GroupOperations<Configuration, Arc<Configuration>, Child, Arc<Child>> for Configuration {
+    fn make_group(_this: ArcBorrow<'_, Configuration>, name: &CStr) -> Result<Arc<Child>> {
         let name = name.try_into()?;
         Arc::pin_init(Child::new(name), flags::GFP_KERNEL)
     }
@@ -66,8 +84,8 @@ impl configfs::GroupOperations<RustConfigfs, Child, Arc<Child>> for RustConfigfs
 struct FooOps;
 
 #[vtable]
-impl configfs::AttributeOperations<RustConfigfs> for FooOps {
-    fn show(container: &RustConfigfs, page: &mut [u8; 4096]) -> isize {
+impl configfs::AttributeOperations<Configuration> for FooOps {
+    fn show(container: &Configuration, page: &mut [u8; 4096]) -> isize {
         pr_info!("Show foo\n");
         let data = container.foo;
         page[0..data.len()].copy_from_slice(data);
@@ -78,8 +96,8 @@ impl configfs::AttributeOperations<RustConfigfs> for FooOps {
 struct BarOps;
 
 #[vtable]
-impl configfs::AttributeOperations<RustConfigfs> for BarOps {
-    fn show(container: &RustConfigfs, page: &mut [u8; 4096]) -> isize {
+impl configfs::AttributeOperations<Configuration> for BarOps {
+    fn show(container: &Configuration, page: &mut [u8; 4096]) -> isize {
         pr_info!("Show bar\n");
         let guard = container.bar.lock();
         let data = guard.0.as_slice();
@@ -88,7 +106,7 @@ impl configfs::AttributeOperations<RustConfigfs> for BarOps {
         len as _
     }
 
-    fn store(container: &RustConfigfs, page: &[u8]) -> isize {
+    fn store(container: &Configuration, page: &[u8]) -> isize {
         pr_info!("Store bar\n");
         let mut guard = container.bar.lock();
         guard.0[0..page.len()].copy_from_slice(page);
@@ -98,7 +116,7 @@ impl configfs::AttributeOperations<RustConfigfs> for BarOps {
 }
 
 kernel::impl_has_subsystem! {
-    impl HasGroup for RustConfigfs { self.config }
+    impl HasSubsystem for Configuration { self.subsystem }
 }
 
 #[pin_data]
@@ -126,8 +144,8 @@ impl Child {
 }
 
 #[vtable]
-impl configfs::GroupOperations<Child, GrandChild, Arc<GrandChild>> for Child {
-    fn make_group(container: &Child, name: &CStr) -> Result<Arc<GrandChild>> {
+impl configfs::GroupOperations<Child, Arc<Child>, GrandChild, Arc<GrandChild>> for Child {
+    fn make_group(container: ArcBorrow<'_, Child>, name: &CStr) -> Result<Arc<GrandChild>> {
         let name = name.try_into()?;
         Arc::pin_init(GrandChild::new(name), flags::GFP_KERNEL)
     }
@@ -142,10 +160,6 @@ impl configfs::AttributeOperations<Child> for BazOps {
         let data = c"Hello Baz\n".to_bytes();
         page[0..data.len()].copy_from_slice(data);
         data.len() as _
-    }
-    fn store(container: &Child, page: &[u8]) -> isize {
-        pr_info!("Store baz (not allowed)\n");
-        page.len() as _
     }
 }
 
@@ -182,13 +196,9 @@ struct GcOps;
 impl configfs::AttributeOperations<GrandChild> for GcOps {
     fn show(container: &GrandChild, page: &mut [u8; 4096]) -> isize {
         pr_info!("Show baz\n");
-        let data = c"Hello Baz\n".to_bytes();
+        let data = c"Hello GC\n".to_bytes();
         page[0..data.len()].copy_from_slice(data);
         data.len() as _
-    }
-    fn store(container: &GrandChild, page: &[u8]) -> isize {
-        pr_info!("Store baz (not allowed)\n");
-        page.len() as _
     }
 }
 
