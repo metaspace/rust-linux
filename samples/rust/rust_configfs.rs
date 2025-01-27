@@ -9,9 +9,10 @@ use kernel::configfs_attrs;
 use kernel::new_mutex;
 use kernel::prelude::*;
 use kernel::str::CString;
+use kernel::sync::Arc;
 use kernel::sync::ArcBorrow;
 use kernel::sync::Mutex;
-use kernel::sync::Arc;
+use kernel::types::ForeignOwnable;
 
 module! {
     type: RustConfigfs,
@@ -48,15 +49,15 @@ impl Configuration {
     }
 }
 
-
 impl kernel::InPlaceModule for RustConfigfs {
     fn init(module: &'static ThisModule) -> impl PinInit<Self, Error> {
         pr_info!("Rust configfs sample (init)\n");
 
-        let item_type  = configfs_attrs! {
+        let item_type = configfs_attrs! {
             container: Configuration,
             child: Child,
             pointer: Arc<Child>,
+            pinned: Arc<Child>,
             attributes: [
                 foo: FooOps,
                 bar: BarOps,
@@ -70,10 +71,14 @@ impl kernel::InPlaceModule for RustConfigfs {
 }
 
 #[vtable]
-impl configfs::GroupOperations<Configuration, Arc<Configuration>, Child, Arc<Child>> for Configuration {
-    fn make_group(_this: ArcBorrow<'_, Configuration>, name: &CStr) -> Result<Arc<Child>> {
-        let name = name.try_into()?;
-        Arc::pin_init(Child::new(name), flags::GFP_KERNEL)
+impl configfs::GroupOperations<Configuration, Arc<Configuration>, Child, Arc<Child>, Arc<Child>>
+    for Configuration
+{
+    fn make_group(
+        _this: <Arc<Configuration> as ForeignOwnable>::Borrowed<'_>,
+        name: &CStr,
+    ) -> Result<impl PinInit<Child, Error>> {
+        Ok(Child::new(name.try_into()?))
     }
 }
 
@@ -121,28 +126,33 @@ struct Child {
 }
 
 impl Child {
-    fn new(name: CString) -> impl PinInit<Self> {
-
-        let tpe = configfs_attrs!{
+    fn new(name: CString) -> impl PinInit<Self, Error> {
+        let tpe = configfs_attrs! {
             container: Child,
             child: GrandChild,
             pointer: Arc<GrandChild>,
+            pinned: Arc<GrandChild>,
             attributes: [
                 baz: BazOps,
             ],
         };
 
-        pin_init!(Self {
+        try_pin_init!(Self {
             group <- configfs::Group::new(name, tpe),
         })
     }
 }
 
 #[vtable]
-impl configfs::GroupOperations<Child, Arc<Child>, GrandChild, Arc<GrandChild>> for Child {
-    fn make_group(_container: ArcBorrow<'_, Child>, name: &CStr) -> Result<Arc<GrandChild>> {
+impl configfs::GroupOperations<Child, Arc<Child>, GrandChild, Arc<GrandChild>, Arc<GrandChild>>
+    for Child
+{
+    fn make_group(
+        _container: <Arc<Child> as ForeignOwnable>::Borrowed<'_>,
+        name: &CStr,
+    ) -> Result<impl PinInit<GrandChild, Error>> {
         let name = name.try_into()?;
-        Arc::pin_init(GrandChild::new(name), flags::GFP_KERNEL)
+        Ok(GrandChild::new(name))
     }
 }
 
@@ -158,7 +168,6 @@ impl configfs::AttributeOperations<Child> for BazOps {
     }
 }
 
-
 kernel::impl_has_group! {
     impl HasGroup for Child { self.group }
 }
@@ -170,16 +179,15 @@ struct GrandChild {
 }
 
 impl GrandChild {
-    fn new(name: CString) -> impl PinInit<Self> {
-
-        let tpe = configfs_attrs!{
+    fn new(name: CString) -> impl PinInit<Self, Error> {
+        let tpe = configfs_attrs! {
             container: GrandChild,
             attributes: [
                 gc: GcOps,
             ],
         };
 
-        pin_init!(Self {
+        try_pin_init!(Self {
             group <- configfs::Group::new(name, tpe),
         })
     }
@@ -200,4 +208,3 @@ impl configfs::AttributeOperations<GrandChild> for GcOps {
 kernel::impl_has_group! {
     impl HasGroup for GrandChild { self.group }
 }
-

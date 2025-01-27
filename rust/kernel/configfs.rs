@@ -74,8 +74,8 @@ impl<C> Subsystem<C> {
     }
 
     /// Get a pointer to the group embedded within this subsystem.
-    pub unsafe fn group_ptr(self: *const Self) -> *const Group<C> {
-        let subsystem = self.cast::<bindings::configfs_subsystem>();
+    pub unsafe fn group_ptr(this: *const Self) -> *const Group<C> {
+        let subsystem = this.cast::<bindings::configfs_subsystem>();
         unsafe { addr_of!((*subsystem).su_group) }.cast()
     }
 }
@@ -165,19 +165,23 @@ where
     }
 }
 
-struct GroupOperationsVTable<PAR, PPTR, CHLD, CPTR>(PhantomData<(PAR, PPTR, CHLD, CPTR)>)
+struct GroupOperationsVTable<PAR, PPTR, CHLD, CPTR, PCPTR>(
+    PhantomData<(PAR, PPTR, CHLD, CPTR, PCPTR)>,
+)
 where
-    PAR: GroupOperations<PAR, PPTR, CHLD, CPTR> + HasGroup,
+    PAR: GroupOperations<PAR, PPTR, CHLD, CPTR, PCPTR> + HasGroup,
     PPTR: ForeignOwnable<PointedTo = PAR>,
     CHLD: HasGroup,
-    CPTR: ForeignOwnable<PointedTo = CHLD>;
+    CPTR: InPlaceInit<CHLD, PinnedSelf = PCPTR>,
+    PCPTR: ForeignOwnable<PointedTo = CHLD>;
 
-impl<PAR, PPTR, CHLD, CPTR> GroupOperationsVTable<PAR, PPTR, CHLD, CPTR>
+impl<PAR, PPTR, CHLD, CPTR, PCPTR> GroupOperationsVTable<PAR, PPTR, CHLD, CPTR, PCPTR>
 where
-    PAR: GroupOperations<PAR, PPTR, CHLD, CPTR> + HasGroup + 'static,
+    PAR: GroupOperations<PAR, PPTR, CHLD, CPTR, PCPTR> + HasGroup + 'static,
     PPTR: ForeignOwnable<PointedTo = PAR>,
     CHLD: HasGroup + 'static,
-    CPTR: ForeignOwnable<PointedTo = CHLD>,
+    CPTR: InPlaceInit<CHLD, PinnedSelf = PCPTR>,
+    PCPTR: ForeignOwnable<PointedTo = CHLD>,
 {
     unsafe extern "C" fn make_group(
         parent_group: *mut bindings::config_group,
@@ -186,7 +190,13 @@ where
         let r_group_ptr: *mut Group<PAR> = parent_group.cast();
         let container_ptr = unsafe { PAR::container_ptr(r_group_ptr) };
         let container_ref = unsafe { PPTR::borrow(container_ptr) };
-        let child = PAR::make_group(container_ref, unsafe { CStr::from_char_ptr(name) });
+        let child_init = match PAR::make_group(container_ref, unsafe { CStr::from_char_ptr(name) })
+        {
+            Ok(child) => child,
+            Err(e) => return e.to_ptr(),
+        };
+
+        let child = CPTR::try_pin_init(child_init, flags::GFP_KERNEL);
 
         match child {
             Ok(child) => {
@@ -212,11 +222,11 @@ where
         let container_ptr = unsafe { CHLD::container_ptr(r_group_ptr) };
 
         if PAR::HAS_DROP_ITEM {
-            PAR::drop_item(parent, unsafe { CPTR::borrow(container_ptr) });
+            PAR::drop_item(parent, unsafe { PCPTR::borrow(container_ptr) });
         }
 
         unsafe { bindings::config_item_put(item) };
-        let child: CPTR = unsafe { CPTR::from_foreign(container_ptr) };
+        let child: PCPTR = unsafe { PCPTR::from_foreign(container_ptr) };
         drop(child);
     }
 
@@ -234,12 +244,13 @@ where
 ///
 /// Implement this trait on structs that embed a [`Subsystem`] or a [`Group`].
 #[vtable]
-pub trait GroupOperations<PAR, PPTR, CHLD, CPTR>
+pub trait GroupOperations<PAR, PPTR, CHLD, CPTR, PCPTR>
 where
     PAR: HasGroup,
     PPTR: ForeignOwnable<PointedTo = PAR>,
     CHLD: HasGroup,
-    CPTR: ForeignOwnable<PointedTo = CHLD>,
+    CPTR: InPlaceInit<CHLD, PinnedSelf = PCPTR>,
+    PCPTR: ForeignOwnable<PointedTo = CHLD>,
 {
     /// The kernel will call this method in response to `mkdir(2)` in the
     /// directory representing `this`.
@@ -247,14 +258,14 @@ where
     /// To accept the request to create a group, implementations should
     /// instantiate a `CHLD` and return a `CPTR` to it. To prevent creation,
     /// return a suitable error.
-    fn make_group(this: PPTR::Borrowed<'_>, name: &CStr) -> Result<CPTR>;
+    fn make_group(this: PPTR::Borrowed<'_>, name: &CStr) -> Result<impl PinInit<CHLD, Error>>;
 
     /// The kernel will call this method before the directory representing
     /// `_child` is removed from `configfs`.
     ///
     /// Implementations can use this method to do house keeping before
     /// `configfs` drops its reference to `CHLD`.
-    fn drop_item(_this: PPTR::Borrowed<'_>, _child: CPTR::Borrowed<'_>) {
+    fn drop_item(_this: PPTR::Borrowed<'_>, _child: PCPTR::Borrowed<'_>) {
         kernel::build_error!(kernel::error::VTABLE_DEFAULT_ERROR)
     }
 }
@@ -405,20 +416,21 @@ unsafe impl<C> Send for ItemType<C> {}
 
 impl<C: HasGroup> ItemType<C> {
     #[doc(hidden)]
-    pub const fn new_with_child_ctor<const N: usize, PAR, PPTR, CHLD, CPTR>(
+    pub const fn new_with_child_ctor<const N: usize, PAR, PPTR, CHLD, CPTR, PCPTR>(
         attributes: &'static AttributeList<N, C>,
     ) -> Self
     where
-        PAR: GroupOperations<PAR, PPTR, CHLD, CPTR> + HasGroup + 'static,
+        PAR: GroupOperations<PAR, PPTR, CHLD, CPTR, PCPTR> + HasGroup + 'static,
         PPTR: ForeignOwnable<PointedTo = PAR>,
         CHLD: HasGroup + 'static,
-        CPTR: ForeignOwnable<PointedTo = CHLD>,
+        CPTR: InPlaceInit<CHLD, PinnedSelf = PCPTR>,
+        PCPTR: ForeignOwnable<PointedTo = CHLD>,
     {
         Self {
             item_type: Opaque::new(bindings::config_item_type {
                 ct_owner: core::ptr::null_mut(),
-                ct_group_ops: (&GroupOperationsVTable::<PAR, PPTR, CHLD, CPTR>::VTABLE as *const _)
-                    as *mut _,
+                ct_group_ops: (&GroupOperationsVTable::<PAR, PPTR, CHLD, CPTR, PCPTR>::VTABLE
+                    as *const _) as *mut _,
                 ct_item_ops: core::ptr::null_mut(),
                 ct_attrs: attributes as *const _ as _,
                 ct_bin_attrs: core::ptr::null_mut(),
@@ -461,11 +473,11 @@ pub unsafe trait HasGroup {
     const OFFSET: usize;
 
     /// Get a pointer to the field of type [`Group`] from a pointer to `Self`.
-    unsafe fn group_ptr(self: *const Self) -> *const Group<Self>
+    unsafe fn group_ptr(this: *const Self) -> *const Group<Self>
     where
         Self: Sized,
     {
-        unsafe { self.cast::<u8>().add(Self::OFFSET).cast::<Group<Self>>() }
+        unsafe { this.cast::<u8>().add(Self::OFFSET).cast::<Group<Self>>() }
     }
 
     /// Get a pointer to `Self` from a pointer to the field of type [`Group`].
@@ -490,12 +502,12 @@ pub unsafe trait HasSubsystem {
     const OFFSET: usize;
 
     /// Get a pointer to the field of type [`Subsystem`] from a pointer to `Self`.
-    unsafe fn subsystem_ptr(self: *const Self) -> *const Subsystem<Self>
+    unsafe fn subsystem_ptr(this: *const Self) -> *const Subsystem<Self>
     where
         Self: Sized,
     {
         unsafe {
-            self.cast::<u8>()
+            this.cast::<u8>()
                 .add(Self::OFFSET)
                 .cast::<Subsystem<Self>>()
         }
@@ -535,12 +547,12 @@ macro_rules! impl_has_group {
             const OFFSET: usize = ::core::mem::offset_of!(Self, $field) as usize;
 
             #[inline]
-            unsafe fn group_ptr(self: *const Self) ->
+            unsafe fn group_ptr(this: *const Self) ->
                 *const $crate::configfs::Group<Self>
             {
                 // SAFETY: The caller promises that the pointer is not dangling.
                 unsafe {
-                    ::core::ptr::addr_of!((*self).$field)
+                    ::core::ptr::addr_of!((*this).$field)
                 }
             }
         }
@@ -564,12 +576,12 @@ macro_rules! impl_has_subsystem {
             const OFFSET: usize = ::core::mem::offset_of!(Self, $field) as usize;
 
             #[inline]
-            unsafe fn subsystem_ptr(self: *const Self) ->
+            unsafe fn subsystem_ptr(this: *const Self) ->
                 *const $crate::configfs::Subsystem<Self>
             {
                 // SAFETY: The caller promises that the pointer is not dangling.
                 unsafe {
-                    ::core::ptr::addr_of!((*self).$field)
+                    ::core::ptr::addr_of!((*this).$field)
                 }
             }
         }
@@ -580,13 +592,14 @@ macro_rules! impl_has_subsystem {
 ///
 /// # Example
 ///
-/// ```
+/// ```ignore
 /// use kernel::configfs;
 /// use kernel::configfs_attrs;
 /// use kernel::prelude::*;
 /// use kernel::sync::Arc;
 /// use kernel::sync::ArcBorrow;
 /// use kernel::c_str;
+/// use kernel::types::ForeignOwnable;
 ///
 /// #[pin_data]
 /// struct Configuration {
@@ -599,8 +612,8 @@ macro_rules! impl_has_subsystem {
 /// }
 ///
 /// #[vtable]
-/// impl configfs::GroupOperations<Configuration, Arc<Configuration>, Child, Arc<Child>> for Configuration {
-///     fn make_group(_this: ArcBorrow<'_, Configuration>, name: &CStr) -> Result<Arc<Child>> {
+/// impl configfs::GroupOperations<Configuration, Arc<Configuration>, Child, Arc<Child>, Arc<Child>> for Configuration {
+///     fn make_group(_this: <Arc<Configuration> as ForeignOwnable>::Borrowed<'_>, name: &CStr) -> Result<impl PinInit<Child, Error>> {
 ///         todo!()
 ///     }
 /// }
@@ -629,6 +642,7 @@ macro_rules! impl_has_subsystem {
 ///     container: Configuration,
 ///     child: Child,
 ///     pointer: Arc<Child>,
+///     pinned: Arc<Child>,
 ///     attributes: [
 ///         foo: FooOps,
 ///     ],
@@ -657,6 +671,7 @@ macro_rules! configfs_attrs {
         container: $container:ty,
         child: $child:ty,
         pointer: $pointer:ty,
+        pinned: $pinned:ty,
         attributes: [
             $($name:ident: $attr:ty,)+
         ],
@@ -664,7 +679,7 @@ macro_rules! configfs_attrs {
         $crate::configfs_attrs!(
             count:
             @container($container),
-            @child($child, $pointer),
+            @child($child, $pointer, $pinned),
             @no_child(),
             @attrs($($name $attr)+),
             @eat($($name $attr,)+),
@@ -674,7 +689,7 @@ macro_rules! configfs_attrs {
     };
     (count:
      @container($container:ty),
-     @child($($child:ty, $pointer:ty)?),
+     @child($($child:ty, $pointer:ty, $pinned:ty)?),
      @no_child($($no_child:ident)?),
      @attrs($($aname:ident $aattr:ty)+),
      @eat($name:ident $attr:ty, $($rname:ident $rattr:ty,)*),
@@ -683,7 +698,7 @@ macro_rules! configfs_attrs {
     ) => {
         $crate::configfs_attrs!(count:
                                 @container($container),
-                                @child($($child, $pointer)?),
+                                @child($($child, $pointer, $pinned)?),
                                 @no_child($($no_child)?),
                                 @attrs($($aname $aattr)+),
                                 @eat($($rname $rattr,)*),
@@ -696,7 +711,7 @@ macro_rules! configfs_attrs {
     };
     (count:
      @container($container:ty),
-     @child($($child:ty, $pointer:ty)?),
+     @child($($child:ty, $pointer:ty, $pinned:ty)?),
      @no_child($($no_child:ident)?),
      @attrs($($aname:ident $aattr:ty)+),
      @eat(),
@@ -706,7 +721,7 @@ macro_rules! configfs_attrs {
     {
         $crate::configfs_attrs!(final:
                                 @container($container),
-                                @child($($child, $pointer)?),
+                                @child($($child, $pointer, $pinned)?),
                                 @no_child($($no_child)?),
                                 @attrs($($aname $aattr)+),
                                 @assign($($assign)*),
@@ -715,7 +730,7 @@ macro_rules! configfs_attrs {
     };
     (final:
      @container($container:ty),
-     @child($($child:ty, $pointer:ty)?),
+     @child($($child:ty, $pointer:ty, $pinned:ty)?),
      @no_child($($no_child:ident)?),
      @attrs($($name:ident $attr:ty)+),
      @assign($($assign:block)+),
@@ -753,7 +768,7 @@ macro_rules! configfs_attrs {
             $(
                 $crate::macros::paste!{
                     static [< $container:upper _TPE >] : $crate::configfs::ItemType<$container>  =
-                        $crate::configfs::ItemType::new_with_child_ctor::<N, $container, Arc<$container>, $child, $pointer>(&  [<$ container:upper _ATTRS >] );
+                        $crate::configfs::ItemType::new_with_child_ctor::<N, $container, Arc<$container>, $child, $pointer, $pinned>(&  [<$ container:upper _ATTRS >] );
                 }
             )?
 
