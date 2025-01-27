@@ -2,14 +2,10 @@
 
 //! Rust configfs sample.
 
-use core::marker::PhantomData;
-
 use kernel::alloc::flags;
 use kernel::c_str;
 use kernel::configfs;
-use kernel::configfs::AttributeList;
 use kernel::configfs_attrs;
-use kernel::impl_has_group;
 use kernel::new_mutex;
 use kernel::prelude::*;
 use kernel::str::CString;
@@ -42,10 +38,10 @@ struct Configuration {
 impl Configuration {
     fn new(
         module: &'static ThisModule,
-        tpe: &'static configfs::ItemType<Self>,
+        item_type: &'static configfs::ItemType<Self>,
     ) -> impl PinInit<Self, Error> {
         try_pin_init!(Self {
-            subsystem <- configfs::Subsystem::new(c_str!("rust_configfs"), module, tpe),
+            subsystem <- configfs::Subsystem::new(c_str!("rust_configfs"), module, item_type),
             foo: c_str!("Hello World\n"),
             bar <- new_mutex!((KBox::new([0;4096], flags::GFP_KERNEL)?,0)),
         })
@@ -57,7 +53,7 @@ impl kernel::InPlaceModule for RustConfigfs {
     fn init(module: &'static ThisModule) -> impl PinInit<Self, Error> {
         pr_info!("Rust configfs sample (init)\n");
 
-        let tpe  = configfs_attrs! {
+        let item_type  = configfs_attrs! {
             container: Configuration,
             child: Child,
             pointer: Arc<Child>,
@@ -68,7 +64,7 @@ impl kernel::InPlaceModule for RustConfigfs {
         };
 
         try_pin_init!(Self {
-            config: configfs::Registration::<Configuration>::new(Configuration::new(module, tpe))?,
+            config: configfs::Subsystem::register(Configuration::new(module, item_type))?,
         })
     }
 }
@@ -81,7 +77,7 @@ impl configfs::GroupOperations<Configuration, Arc<Configuration>, Child, Arc<Chi
     }
 }
 
-struct FooOps;
+enum FooOps {}
 
 #[vtable]
 impl configfs::AttributeOperations<Configuration> for FooOps {
@@ -106,12 +102,11 @@ impl configfs::AttributeOperations<Configuration> for BarOps {
         len as _
     }
 
-    fn store(container: &Configuration, page: &[u8]) -> isize {
+    fn store(container: &Configuration, page: &[u8]) {
         pr_info!("Store bar\n");
         let mut guard = container.bar.lock();
         guard.0[0..page.len()].copy_from_slice(page);
         guard.1 = page.len();
-        page.len() as _
     }
 }
 
@@ -145,7 +140,7 @@ impl Child {
 
 #[vtable]
 impl configfs::GroupOperations<Child, Arc<Child>, GrandChild, Arc<GrandChild>> for Child {
-    fn make_group(container: ArcBorrow<'_, Child>, name: &CStr) -> Result<Arc<GrandChild>> {
+    fn make_group(_container: ArcBorrow<'_, Child>, name: &CStr) -> Result<Arc<GrandChild>> {
         let name = name.try_into()?;
         Arc::pin_init(GrandChild::new(name), flags::GFP_KERNEL)
     }
@@ -155,7 +150,7 @@ struct BazOps;
 
 #[vtable]
 impl configfs::AttributeOperations<Child> for BazOps {
-    fn show(container: &Child, page: &mut [u8; 4096]) -> isize {
+    fn show(_container: &Child, page: &mut [u8; 4096]) -> isize {
         pr_info!("Show baz\n");
         let data = c"Hello Baz\n".to_bytes();
         page[0..data.len()].copy_from_slice(data);
@@ -194,7 +189,7 @@ struct GcOps;
 
 #[vtable]
 impl configfs::AttributeOperations<GrandChild> for GcOps {
-    fn show(container: &GrandChild, page: &mut [u8; 4096]) -> isize {
+    fn show(_container: &GrandChild, page: &mut [u8; 4096]) -> isize {
         pr_info!("Show baz\n");
         let data = c"Hello GC\n".to_bytes();
         page[0..data.len()].copy_from_slice(data);

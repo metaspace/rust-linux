@@ -11,24 +11,35 @@
 //!
 //! See [the samples folder] for an example.
 //!
+//! For details on configfs, see the [`C
+//! documentation`](srctree/Documentation/filesystems/configfs.rst).
+//!
+//! C header: [`include/linux/configfs.h`](srctree/include/linux/configfs.h)
+//!
 //! [the samples folder]: srctree/samples/rust/rust_configfs.rs
 //!
 
+use crate::types::ForeignOwnable;
+use crate::{prelude::*, types::Opaque};
 use core::cell::UnsafeCell;
+use core::marker::PhantomData;
 use core::mem::offset_of;
 use core::ops::Deref;
 use core::ptr::addr_of;
 use core::ptr::addr_of_mut;
-use core::{array::IntoIter, marker::PhantomData};
-use init::PinnedDrop;
 use kernel::alloc::flags;
 use kernel::str::CString;
 use kernel::sync::Arc;
-use kernel::sync::ArcBorrow;
 
-use crate::types::ForeignOwnable;
-use crate::{prelude::*, types::Opaque};
-
+/// A `configfs` subsystem.
+///
+/// This is the top level entrypoint for a `configfs` hierarchy. Embed a field
+/// of this type into a struct and implement [`HasSubsystem`] for the struct
+/// with the [`impl_has_subsystem`] macro. Instantiate the subsystem with
+/// [`Subsystem::register`].
+///
+/// A [`Subsystem`] is also a [`Group`], and implementing [`HasSubsystem`] for a
+/// type will automatically implement [`HasGroup`] for the type.
 #[pin_data]
 #[repr(transparent)]
 pub struct Subsystem<C> {
@@ -41,15 +52,20 @@ unsafe impl<C> Sync for Subsystem<C> {}
 unsafe impl<C> Send for Subsystem<C> {}
 
 impl<C> Subsystem<C> {
+    /// Create an initializer for a [`Subsystem`].
+    ///
+    /// The subsystem will appear in configfs as a directory name given by
+    /// `name`. The attributes available in directory are specified by
+    /// `item_type`.
     pub fn new(
         name: &'static CStr,
-        owner: &ThisModule,
-        tpe: &'static ItemType<C>,
+        _module: &ThisModule,
+        item_type: &'static ItemType<C>,
     ) -> impl PinInit<Self> {
         pin_init!(Self {
             subsystem <- Opaque::ffi_init(|place: *mut bindings::configfs_subsystem| {
                 unsafe {addr_of_mut!((*place).su_group.cg_item.ci_name ).write(name.as_ptr() as _) };
-                unsafe {addr_of_mut!((*place).su_group.cg_item.ci_type).write(tpe.as_ptr()) };
+                unsafe {addr_of_mut!((*place).su_group.cg_item.ci_type).write(item_type.as_ptr()) };
                 unsafe { bindings::config_group_init(&mut (*place).su_group) };
                 unsafe { bindings::__mutex_init(&mut (*place).su_mutex, kernel::optional_name!().as_char_ptr(), kernel::static_lock_class!().as_ptr()) }
             }),
@@ -57,27 +73,27 @@ impl<C> Subsystem<C> {
         })
     }
 
+    /// Get a pointer to the group embedded within this subsystem.
     pub unsafe fn group_ptr(self: *const Self) -> *const Group<C> {
         let subsystem = self.cast::<bindings::configfs_subsystem>();
         unsafe { addr_of!((*subsystem).su_group) }.cast()
     }
 }
 
-pub struct Registration<C>
+impl<C> Subsystem<C>
 where
     C: HasSubsystem,
 {
-    inner: Arc<C>,
-}
-
-impl<C> Registration<C>
-where
-    C: HasSubsystem,
-{
-    pub fn new(init: impl PinInit<C, Error>) -> Result<Self> {
-        let this = Self {
+    /// Register a subsystem with `configfs`.
+    ///
+    /// This function will instantiate a [`C: HasSubsystem`] and register the subsystem within it.
+    ///
+    /// [`C: HasSubsystem`]: `HasSubsystem`
+    pub fn register(init: impl PinInit<C, Error>) -> Result<Registration<C>> {
+        let this = Registration {
             inner: Arc::pin_init(init, flags::GFP_KERNEL)?,
         };
+
         crate::error::to_result(unsafe {
             bindings::configfs_register_subsystem(
                 C::subsystem_ptr(this.inner.deref() as *const C)
@@ -88,6 +104,17 @@ where
 
         Ok(this)
     }
+}
+
+/// A registration of a `configfs` [`Subsystem`].
+///
+/// When the registration is droped, the registered subsystem is removed from
+/// `configfs`.
+pub struct Registration<C>
+where
+    C: HasSubsystem,
+{
+    inner: Arc<C>,
 }
 
 impl<C> Drop for Registration<C>
@@ -105,6 +132,10 @@ where
     }
 }
 
+/// A `configfs` group.
+///
+/// To add a subgroup to `configfs`, embed a field of this type into a struct
+/// and use it for the `CHLD` generic of [`GroupOperations`].
 #[pin_data]
 #[repr(transparent)]
 pub struct Group<C> {
@@ -117,12 +148,16 @@ impl<C> Group<C>
 where
     C: 'static,
 {
-    pub fn new(name: CString, tpe: &'static ItemType<C>) -> impl PinInit<Self> {
+    /// Create an initializer for a new group.
+    ///
+    /// When instantiated, the group will appear as a directory with the name
+    /// given by `name` and it will contain attributes specified by `item_type`.
+    pub fn new(name: CString, item_type: &'static ItemType<C>) -> impl PinInit<Self> {
         pin_init!(Self {
             group <- kernel::init::zeroed().chain(|v: &mut Opaque<bindings::config_group>| {
                 let place = v.get();
                 let name = name.as_bytes_with_nul().as_ptr();
-                unsafe { bindings::config_group_init_type_name(place, name as _, tpe.as_ptr()) }
+                unsafe { bindings::config_group_init_type_name(place, name as _, item_type.as_ptr()) }
                 Ok(())
             }),
             _p: PhantomData,
@@ -130,7 +165,6 @@ where
     }
 }
 
-// Make enum?
 struct GroupOperationsVTable<PAR, PPTR, CHLD, CPTR>(PhantomData<(PAR, PPTR, CHLD, CPTR)>)
 where
     PAR: GroupOperations<PAR, PPTR, CHLD, CPTR> + HasGroup,
@@ -196,6 +230,9 @@ where
     };
 }
 
+/// Operations implemented by `configfs` groups that can create subgroups.
+///
+/// Implement this trait on structs that embed a [`Subsystem`] or a [`Group`].
 #[vtable]
 pub trait GroupOperations<PAR, PPTR, CHLD, CPTR>
 where
@@ -204,16 +241,29 @@ where
     CHLD: HasGroup,
     CPTR: ForeignOwnable<PointedTo = CHLD>,
 {
-    /// Called by kernel to make a child node.
+    /// The kernel will call this method in response to `mkdir(2)` in the
+    /// directory representing `this`.
+    ///
+    /// To accept the request to create a group, implementations should
+    /// instantiate a `CHLD` and return a `CPTR` to it. To prevent creation,
+    /// return a suitable error.
     fn make_group(this: PPTR::Borrowed<'_>, name: &CStr) -> Result<CPTR>;
 
-    /// Called by kernel when a child node is about to be dropped.
-    fn drop_item(this: PPTR::Borrowed<'_>, child: CPTR::Borrowed<'_>) {
+    /// The kernel will call this method before the directory representing
+    /// `_child` is removed from `configfs`.
+    ///
+    /// Implementations can use this method to do house keeping before
+    /// `configfs` drops its reference to `CHLD`.
+    fn drop_item(_this: PPTR::Borrowed<'_>, _child: CPTR::Borrowed<'_>) {
         kernel::build_error!(kernel::error::VTABLE_DEFAULT_ERROR)
     }
 }
 
-#[repr(C)]
+/// A `configfs` attribute.
+///
+/// An attribute appear as a file in configfs, inside a folder that represent
+/// the group that the attribute belongs to.
+#[repr(transparent)]
 pub struct Attribute<AO, HG> {
     attribute: Opaque<bindings::configfs_attribute>,
     _p: PhantomData<(AO, HG)>,
@@ -250,40 +300,64 @@ where
         let container_ref = unsafe { &*container_ptr };
         AO::store(container_ref, unsafe {
             core::slice::from_raw_parts(page.cast(), size)
-        })
+        });
+        size as isize
     }
 
+    /// Create a new attribute.
+    ///
+    /// The attribute will appear as a file with name given by `name`.
     pub const fn new(name: &'static CStr) -> Self {
         Self {
-            attribute: unsafe {
-                Opaque::new(bindings::configfs_attribute {
-                    ca_name: name as *const _ as _,
-                    ca_owner: core::ptr::null_mut(),
-                    ca_mode: 0o660,
-                    show: Some(Self::show),
-                    store: if AO::HAS_STORE {
-                        Some(Self::store)
-                    } else {
-                        None
-                    },
-                })
-            },
+            attribute: Opaque::new(bindings::configfs_attribute {
+                ca_name: name as *const _ as _,
+                ca_owner: core::ptr::null_mut(),
+                ca_mode: 0o660,
+                show: Some(Self::show),
+                store: if AO::HAS_STORE {
+                    Some(Self::store)
+                } else {
+                    None
+                },
+            }),
             _p: PhantomData,
         }
     }
 }
 
+/// Operations supported by an attribute.
+///
+/// Implement this trait on type and pass that type as generic parameter when
+/// creating an [`Attribute`]. The type carrying the implementation serve no
+/// purpose other than specifying the attribute operations.
 #[vtable]
 pub trait AttributeOperations<AO>
 where
     AO: HasGroup,
 {
+    /// This function is called by the kernel to read the value of an attribute.
+    ///
+    /// Implementations should write the rendering of the attribute to `page`
+    /// and return the number of bytes written.
     fn show(container: &AO, page: &mut [u8; 4096]) -> isize;
-    fn store(container: &AO, page: &[u8]) -> isize {
+
+    /// This function is called by the kernel to update the value of an attribute.
+    ///
+    /// Implementations should parse the value from `page` and update internal
+    /// state to reflect the parsed value. Partial writes are not supported and
+    /// implementations should expect the full page to arrive in one write
+    /// operation.
+    fn store(_container: &AO, _page: &[u8]) {
         kernel::build_error!(kernel::error::VTABLE_DEFAULT_ERROR)
     }
 }
 
+/// A list of attributes.
+///
+/// This type is used to construct a new [`ItemType`]`. It represents a list of
+/// [`Attribute`] that will appear in the directory representing a [`Group`].
+/// Users should not directly instantiate this type, rather they should use the
+/// [`configfs_attrs`] macro to declare a static set of attributes for a group.
 #[repr(transparent)]
 pub struct AttributeList<const N: usize, C>(
     UnsafeCell<[*mut kernel::ffi::c_void; N]>,
@@ -295,10 +369,12 @@ unsafe impl<const N: usize, C: HasGroup> Send for AttributeList<N, C> {}
 unsafe impl<const N: usize, C: HasGroup> Sync for AttributeList<N, C> {}
 
 impl<const N: usize, C: HasGroup> AttributeList<N, C> {
+    #[doc(hidden)]
     pub const fn new() -> Self {
         Self(UnsafeCell::new([core::ptr::null_mut(); N]), PhantomData)
     }
 
+    #[doc(hidden)]
     pub const fn add<const I: usize, O: AttributeOperations<C>>(
         &'static self,
         attribute: &'static Attribute<O, C>,
@@ -311,6 +387,11 @@ impl<const N: usize, C: HasGroup> AttributeList<N, C> {
     }
 }
 
+/// A representation of the attributes that will appear in a [`Group`].
+///
+/// Users should not directly instantiate objects of this type. Rather, they
+/// should use the [`configfs_attrs`] macro to statically declare the shape of a
+/// [`Group`].
 #[pin_data]
 pub struct ItemType<C> {
     #[pin]
@@ -322,6 +403,7 @@ unsafe impl<C> Sync for ItemType<C> {}
 unsafe impl<C> Send for ItemType<C> {}
 
 impl<C: HasGroup> ItemType<C> {
+    #[doc(hidden)]
     pub const fn new_with_child_ctor<const N: usize, PAR, PPTR, CHLD, CPTR>(
         attributes: &'static AttributeList<N, C>,
     ) -> Self
@@ -344,6 +426,7 @@ impl<C: HasGroup> ItemType<C> {
         }
     }
 
+    #[doc(hidden)]
     pub const fn new<const N: usize>(attributes: &'static AttributeList<N, C>) -> Self {
         Self {
             item_type: Opaque::new(bindings::config_item_type {
@@ -364,8 +447,20 @@ impl<C> ItemType<C> {
     }
 }
 
+/// Implement this trait for structs that embed a field of type [`Group`].
+///
+/// # Safety
+///
+/// Implementers of this trait must have a field of type [`Group`] at offset
+/// `OFFSET`. If any member methods are implemented they must be implemented
+/// according to the documentation on the methods in this trait declaration.
 pub unsafe trait HasGroup {
+    /// The implementer of the trait must have a field of type [`Group`] at this
+    /// offset.
     const OFFSET: usize;
+
+
+    /// Get a pointer to the field of type [`Group`] from a pointer to `Self`.
     unsafe fn group_ptr(self: *const Self) -> *const Group<Self>
     where
         Self: Sized,
@@ -373,6 +468,7 @@ pub unsafe trait HasGroup {
         unsafe { self.cast::<u8>().add(Self::OFFSET).cast::<Group<Self>>() }
     }
 
+    /// Get a pointer to `Self` from a pointer to the field of type [`Group`].
     unsafe fn container_ptr(group: *mut Group<Self>) -> *mut Self
     where
         Self: Sized,
@@ -381,8 +477,19 @@ pub unsafe trait HasGroup {
     }
 }
 
+/// Implement this trait for structs that embed a field of type [`Subsystem`].
+///
+/// # Safety
+///
+/// Implementers of this trait must have a field of type [`Subsystem`] at offset
+/// `OFFSET`. If any member methods are implemented they must be implemented
+/// according to the documentation on the methods in this trait declaration.
 pub unsafe trait HasSubsystem {
+    /// The implementer of the trait must have a field of type [`Subsystem`] at
+    /// this offset.
     const OFFSET: usize;
+
+    /// Get a pointer to the field of type [`Subsystem`] from a pointer to `Self`.
     unsafe fn subsystem_ptr(self: *const Self) -> *const Subsystem<Self>
     where
         Self: Sized,
@@ -394,6 +501,7 @@ pub unsafe trait HasSubsystem {
         }
     }
 
+    /// Get a pointer to `Self` from a pointer to the field of type [`Subsystem`].
     unsafe fn container_ptr(subsystem: *mut Subsystem<Self>) -> *mut Self
     where
         Self: Sized,
@@ -410,7 +518,8 @@ where
         <T as HasSubsystem>::OFFSET + offset_of!(bindings::configfs_subsystem, su_group);
 }
 
-/// Use to implement the [`HasGroup<T>`] trait for types that embed a [`Group`].
+/// Use this macro to implement the [`HasGroup<T>`] trait for types that embed a
+/// [`Group`].
 #[macro_export]
 macro_rules! impl_has_group {
     (
@@ -438,7 +547,8 @@ macro_rules! impl_has_group {
     }
 }
 
-/// Use to implement the [`HasSubsystem<T>`] trait for types that embed a [`Subsystem`].
+/// Use to implement the [`HasSubsystem<T>`] trait for types that embed a
+/// [`Subsystem`].
 #[macro_export]
 macro_rules! impl_has_subsystem {
     (
@@ -466,11 +576,64 @@ macro_rules! impl_has_subsystem {
     }
 }
 
-macro_rules! count {
-    () => (0usize);
-    ($x:ident, $($xs:tt)* ) => (1usize + count!($($xs)*));
-}
-
+/// Define a list of configfs attributes statically.
+///
+/// # Example
+///
+/// ```
+/// use kernel::configfs;
+/// use kernel::configfs_attrs;
+/// use kernel::prelude::*;
+/// use kernel::sync::Arc;
+/// use kernel::sync::ArcBorrow;
+/// use kernel::c_str;
+///
+/// #[pin_data]
+/// struct Configuration {
+///     #[pin]
+///     subsystem: configfs::Subsystem<Self>,
+/// }
+///
+/// kernel::impl_has_subsystem! {
+///     impl HasSubsystem for Configuration { self.subsystem }
+/// }
+///
+/// #[vtable]
+/// impl configfs::GroupOperations<Configuration, Arc<Configuration>, Child, Arc<Child>> for Configuration {
+///     fn make_group(_this: ArcBorrow<'_, Configuration>, name: &CStr) -> Result<Arc<Child>> {
+///         todo!()
+///     }
+/// }
+///
+/// #[pin_data]
+/// struct Child {
+///     #[pin]
+///     group: configfs::Group<Self>,
+/// }
+///
+/// kernel::impl_has_group! {
+///     impl HasGroup for Child { self.group }
+/// }
+///
+/// enum FooOps {}
+///
+/// #[vtable]
+/// impl configfs::AttributeOperations<Configuration> for FooOps {
+///     fn show(container: &Configuration, page: &mut [u8; 4096]) -> isize {
+///         pr_info!("Show foo\n");
+///         todo!()
+///     }
+/// }
+///
+/// let item_type  = configfs_attrs! {
+///     container: Configuration,
+///     child: Child,
+///     pointer: Arc<Child>,
+///     attributes: [
+///         foo: FooOps,
+///     ],
+/// };
+/// ```
 #[macro_export]
 macro_rules! configfs_attrs {
     (
