@@ -35,7 +35,7 @@ use kernel::sync::Arc;
 ///
 /// This is the top level entrypoint for a `configfs` hierarchy. Embed a field
 /// of this type into a struct and implement [`HasSubsystem`] for the struct
-/// with the [`impl_has_subsystem`] macro. Instantiate the subsystem with
+/// with the [`kernel::impl_has_subsystem`] macro. Instantiate the subsystem with
 /// [`Subsystem::register`].
 ///
 /// A [`Subsystem`] is also a [`Group`], and implementing [`HasSubsystem`] for a
@@ -354,10 +354,11 @@ where
 
 /// A list of attributes.
 ///
-/// This type is used to construct a new [`ItemType`]`. It represents a list of
+/// This type is used to construct a new [`ItemType`]. It represents a list of
 /// [`Attribute`] that will appear in the directory representing a [`Group`].
 /// Users should not directly instantiate this type, rather they should use the
-/// [`configfs_attrs`] macro to declare a static set of attributes for a group.
+/// [`kernel::configfs_attrs`] macro to declare a static set of attributes for a
+/// group.
 #[repr(transparent)]
 pub struct AttributeList<const N: usize, C>(
     UnsafeCell<[*mut kernel::ffi::c_void; N]>,
@@ -390,8 +391,8 @@ impl<const N: usize, C: HasGroup> AttributeList<N, C> {
 /// A representation of the attributes that will appear in a [`Group`].
 ///
 /// Users should not directly instantiate objects of this type. Rather, they
-/// should use the [`configfs_attrs`] macro to statically declare the shape of a
-/// [`Group`].
+/// should use the [`kernel::configfs_attrs`] macro to statically declare the
+/// shape of a [`Group`].
 #[pin_data]
 pub struct ItemType<C> {
     #[pin]
@@ -458,7 +459,6 @@ pub unsafe trait HasGroup {
     /// The implementer of the trait must have a field of type [`Group`] at this
     /// offset.
     const OFFSET: usize;
-
 
     /// Get a pointer to the field of type [`Group`] from a pointer to `Self`.
     unsafe fn group_ptr(self: *const Self) -> *const Group<Self>
