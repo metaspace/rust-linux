@@ -767,6 +767,7 @@ macro_rules! configfs_attrs {
 
             $(
                 $crate::macros::paste!{
+                    // TODO: Parent not always Arc<$container>
                     static [< $container:upper _TPE >] : $crate::configfs::ItemType<$container>  =
                         $crate::configfs::ItemType::new_with_child_ctor::<N, $container, Arc<$container>, $child, $pointer, $pinned>(&  [<$ container:upper _ATTRS >] );
                 }
