@@ -8,6 +8,7 @@
 //! - Symlink support.
 //! - `disconnect_notify` hook.
 //! - Item `release` hook
+//! - Default groups.
 //!
 //! See [the samples folder] for an example.
 //!
