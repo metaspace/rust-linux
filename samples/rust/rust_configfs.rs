@@ -27,7 +27,7 @@ struct RustConfigfs {
 
 #[pin_data]
 struct Configuration {
-    foo: &'static CStr,
+    message: &'static CStr,
     #[pin]
     bar: Mutex<(KBox<[u8; 4096]>, usize)>,
 }
@@ -35,7 +35,7 @@ struct Configuration {
 impl Configuration {
     fn new() -> impl PinInit<Self, Error> {
         try_pin_init!(Self {
-            foo: c_str!("Hello World\n"),
+            message: c_str!("Hello World\n"),
             bar <- new_mutex!((KBox::new([0;4096], flags::GFP_KERNEL)?,0)),
         })
     }
@@ -51,7 +51,7 @@ impl kernel::InPlaceModule for RustConfigfs {
             pointer: Arc<configfs::Group<Child>>,
             pinned: Arc<configfs::Group<Child>>,
             attributes: [
-                foo: FooOps,
+                message: FooOps,
                 bar: BarOps,
             ],
         };
@@ -94,8 +94,8 @@ enum FooOps {}
 #[vtable]
 impl configfs::AttributeOperations<Configuration> for FooOps {
     fn show(container: &Configuration, page: &mut [u8; 4096]) -> isize {
-        pr_info!("Show foo\n");
-        let data = container.foo;
+        pr_info!("Show message\n");
+        let data = container.message;
         page[0..data.len()].copy_from_slice(data);
         data.len() as _
     }

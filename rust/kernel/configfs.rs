@@ -22,6 +22,7 @@
 //! [rust_configfs.rs]: srctree/samples/rust/rust_configfs.rs
 
 use crate::container_of;
+use crate::page::PAGE_SIZE;
 use crate::types::ForeignOwnable;
 use crate::{prelude::*, types::Opaque};
 use core::cell::UnsafeCell;
@@ -254,7 +255,12 @@ where
         // is safe.
         let parent_data = unsafe { get_group_data(this) };
 
-        let group_init = match PAR::make_group(parent_data, unsafe { CStr::from_char_ptr(name) }) {
+        let group_init = match PAR::make_group(
+            parent_data,
+            // SAFETY: By function safety requirements, name points to a null
+            // terminated string.
+            unsafe { CStr::from_char_ptr(name) },
+        ) {
             Ok(init) => init,
             Err(e) => return e.to_ptr(),
         };
@@ -301,9 +307,12 @@ where
         let r_child_group_ptr = unsafe { Group::<CHLD>::container_of(c_child_group_ptr) };
 
         if PAR::HAS_DROP_ITEM {
-            PAR::drop_item(parent_data, unsafe {
-                PCPTR::borrow(r_child_group_ptr.cast_mut())
-            });
+            PAR::drop_item(
+                parent_data,
+                // SAFETY: We called `into_foreign` to produce `r_child_group_ptr` in
+                // `make_group`. There are not other borrows of this pointer in existence.
+                unsafe { PCPTR::borrow(r_child_group_ptr.cast_mut()) },
+            );
         }
 
         // SAFETY: By C API contract, `configfs` is not going to touch `item`
@@ -388,16 +397,17 @@ where
         item: *mut bindings::config_item,
         page: *mut kernel::ffi::c_char,
     ) -> isize {
+        let c_group: *mut bindings::config_group =
         // SAFETY: By function safety requirements, `item` is embedded in a
         // `config_group`.
-        let c_group: *mut bindings::config_group =
             unsafe { container_of!(item, bindings::config_group, cg_item) }.cast_mut();
 
         // SAFETY: The function safety requirements for this function satisfy
         // the conditions for this call.
         let data: &DATA = unsafe { get_group_data(c_group) };
 
-        AO::show(data, unsafe { &mut *(page as *mut [u8; 4096]) })
+        // SAFETY: By function safety requirements, `page` is writable for `PAGE_SIZE`.
+        AO::show(data, unsafe { &mut *(page as *mut [u8; PAGE_SIZE]) })
     }
 
     /// # Safety
@@ -410,24 +420,27 @@ where
     /// Otherwise, the group must be a embedded in a
     /// `bindings::configfs_subsystem` that is embedded in a `Subsystem<PAR>`.
     ///
-    /// `page` must point to a writable buffer of size at least `size`.
+    /// `page` must point to a readable buffer of size at least `size`.
     unsafe extern "C" fn store(
         item: *mut bindings::config_item,
         page: *const kernel::ffi::c_char,
         size: usize,
     ) -> isize {
+        let c_group: *mut bindings::config_group =
         // SAFETY: By function safety requirements, `item` is embedded in a
         // `config_group`.
-        let c_group: *mut bindings::config_group =
             unsafe { container_of!(item, bindings::config_group, cg_item) }.cast_mut();
 
         // SAFETY: The function safety requirements for this function satisfy
         // the conditions for this call.
         let data: &DATA = unsafe { get_group_data(c_group) };
 
-        AO::store(data, unsafe {
-            core::slice::from_raw_parts(page.cast(), size)
-        });
+        AO::store(
+            data,
+            // SAFETY: By function safety requirements, `page` is readable
+            // for at least `size`.
+            unsafe { core::slice::from_raw_parts(page.cast(), size) },
+        );
 
         size as isize
     }
@@ -464,7 +477,7 @@ pub trait AttributeOperations<DATA> {
     ///
     /// Implementations should write the rendering of the attribute to `page`
     /// and return the number of bytes written.
-    fn show(data: &DATA, page: &mut [u8; 4096]) -> isize;
+    fn show(data: &DATA, page: &mut [u8; PAGE_SIZE]) -> isize;
 
     /// This function is called by the kernel to update the value of an attribute.
     ///
@@ -523,7 +536,9 @@ impl<const N: usize, DATA> AttributeList<N, DATA> {
         // ensures that we are evaluating the function in const context when
         // initializing a static. As such, the reference created below will be
         // exclusive.
-        unsafe { (&mut *self.0.get())[I] = (attribute as *const Attribute<O, DATA>).cast_mut().cast() };
+        unsafe {
+            (&mut *self.0.get())[I] = (attribute as *const Attribute<O, DATA>).cast_mut().cast()
+        };
     }
 }
 
@@ -541,7 +556,6 @@ pub struct ItemType<DATA> {
 
 // SAFETY: We do not provide any operations on `ItemType` that need synchronization.
 unsafe impl<DATA> Sync for ItemType<DATA> {}
-
 
 // SAFETY: Ownership of `ItemType` can safely be transferred to other threads.
 unsafe impl<DATA> Send for ItemType<DATA> {}
@@ -648,7 +662,7 @@ macro_rules! configfs_attrs {
                                 @assign($($assign)* {
                                     const N: usize = $cnt;
                                     // SAFETY: We are expanding `configfs_attrs`.
-                                    unsafe { 
+                                    unsafe {
                                         $crate::macros::paste!( [< $container:upper _ATTRS >])
                                             .add::<N, _>(& $crate::macros::paste!( [< $container:upper _ $name:upper _ATTR >]))
                                     };
