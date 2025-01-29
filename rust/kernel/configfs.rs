@@ -490,7 +490,10 @@ pub struct AttributeList<const N: usize, DATA>(
     PhantomData<DATA>,
 );
 
+// SAFETY: Ownership of `AttributeList` can safely be transferred to other threads.
 unsafe impl<const N: usize, DATA> Send for AttributeList<N, DATA> {}
+
+// SAFETY: We do not provide any operations on `AttributeList` that need synchronization.
 unsafe impl<const N: usize, DATA> Sync for AttributeList<N, DATA> {}
 
 impl<const N: usize, DATA> AttributeList<N, DATA> {
@@ -536,7 +539,11 @@ pub struct ItemType<DATA> {
     _p: PhantomData<DATA>,
 }
 
+// SAFETY: We do not provide any operations on `ItemType` that need synchronization.
 unsafe impl<DATA> Sync for ItemType<DATA> {}
+
+
+// SAFETY: Ownership of `ItemType` can safely be transferred to other threads.
 unsafe impl<DATA> Send for ItemType<DATA> {}
 
 impl<DATA> ItemType<DATA> {
