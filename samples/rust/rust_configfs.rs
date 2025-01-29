@@ -8,11 +8,8 @@ use kernel::configfs;
 use kernel::configfs_attrs;
 use kernel::new_mutex;
 use kernel::prelude::*;
-use kernel::str::CString;
 use kernel::sync::Arc;
-use kernel::sync::ArcBorrow;
 use kernel::sync::Mutex;
-use kernel::types::ForeignOwnable;
 
 module! {
     type: RustConfigfs,
@@ -45,7 +42,7 @@ impl Configuration {
 }
 
 impl kernel::InPlaceModule for RustConfigfs {
-    fn init(module: &'static ThisModule) -> impl PinInit<Self, Error> {
+    fn init(_module: &'static ThisModule) -> impl PinInit<Self, Error> {
         pr_info!("Rust configfs sample (init)\n");
 
         let item_type = configfs_attrs! {
@@ -60,7 +57,7 @@ impl kernel::InPlaceModule for RustConfigfs {
         };
 
         try_pin_init!(Self {
-            config <- configfs::Subsystem::new(kernel::c_str!("rust_configfs"), module, item_type, Configuration::new()),
+            config <- configfs::Subsystem::new(kernel::c_str!("rust_configfs"), item_type, Configuration::new()),
         })
     }
 }

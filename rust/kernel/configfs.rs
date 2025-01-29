@@ -1,8 +1,12 @@
 // SPDX-License-Identifier: GPL-2.0
 
-//! Configfs interface.
+//! `configfs` interface.
 //!
-//! Features not covered:
+//! `configfs` is an in-memory pseudo file system for configuration of kernel
+//! modules. Please see the [C documentation] for details and intended use of
+//! `configfs`.
+//!
+//! This module does not support the following `configfs` features:
 //!
 //! - Items. All group children are groups.
 //! - Symlink support.
@@ -10,28 +14,22 @@
 //! - Item `release` hook
 //! - Default groups.
 //!
-//! See [the samples folder] for an example.
-//!
-//! For details on configfs, see the [`C
-//! documentation`](srctree/Documentation/filesystems/configfs.rst).
+//! See the [rust_configfs.rs] sample for a full example use of this module.
 //!
 //! C header: [`include/linux/configfs.h`](srctree/include/linux/configfs.h)
 //!
-//! [the samples folder]: srctree/samples/rust/rust_configfs.rs
-//!
+//! [C documentation]: srctree/Documentation/filesystems/configfs.rst
+//! [rust_configfs.rs]: srctree/samples/rust/rust_configfs.rs
 
 use crate::container_of;
 use crate::types::ForeignOwnable;
 use crate::{prelude::*, types::Opaque};
 use core::cell::UnsafeCell;
 use core::marker::PhantomData;
-use core::mem::offset_of;
-use core::ops::Deref;
 use core::ptr::addr_of;
 use core::ptr::addr_of_mut;
 use kernel::alloc::flags;
 use kernel::str::CString;
-use kernel::sync::Arc;
 
 /// A `configfs` subsystem.
 ///
@@ -50,7 +48,10 @@ pub struct Subsystem<DATA> {
     data: DATA,
 }
 
+// SAFETY: We do not provide any operations on `Subsystem`.
 unsafe impl<DATA> Sync for Subsystem<DATA> {}
+
+// SAFETY: Ownership of `Subsystem` can safely be transferred to other threads.
 unsafe impl<DATA> Send for Subsystem<DATA> {}
 
 impl<DATA> Subsystem<DATA> {
@@ -61,24 +62,31 @@ impl<DATA> Subsystem<DATA> {
     /// `item_type`.
     pub fn new(
         name: &'static CStr,
-        _module: &ThisModule,
         item_type: &'static ItemType<DATA>,
         data: impl PinInit<DATA, Error>,
     ) -> impl PinInit<Self, Error> {
         try_pin_init!(Self {
-            subsystem <- Opaque::ffi_init(|place: *mut bindings::configfs_subsystem| {
-                unsafe {addr_of_mut!((*place).su_group.cg_item.ci_name ).write(name.as_ptr() as _) };
-                unsafe {addr_of_mut!((*place).su_group.cg_item.ci_type).write(item_type.as_ptr()) };
-                unsafe { bindings::config_group_init(&mut (*place).su_group) };
-                unsafe { bindings::__mutex_init(&mut (*place).su_mutex, kernel::optional_name!().as_char_ptr(), kernel::static_lock_class!().as_ptr()) }
+            subsystem <- kernel::init::zeroed().chain(|place: &mut Opaque<bindings::configfs_subsystem>| {
+                // SAFETY: All of `place` is valid for write.
+                unsafe { addr_of_mut!((*place.get()).su_group.cg_item.ci_name ).write(name.as_ptr().cast_mut().cast()) };
+                // SAFETY: All of `place` is valid for write.
+                unsafe { addr_of_mut!((*place.get()).su_group.cg_item.ci_type).write(item_type.as_ptr()) };
+                // SAFETY: We initialized the required fields of `place.group` above.
+                unsafe { bindings::config_group_init(&mut (*place.get()).su_group) };
+                // SAFETY: `place.su_mutex` is valid for use as a mutex.
+                unsafe { bindings::__mutex_init(&mut (*place.get()).su_mutex, kernel::optional_name!().as_char_ptr(), kernel::static_lock_class!().as_ptr()) }
+                Ok(())
             }),
             data <- data,
         }).pin_chain(|this| {
-            crate::error::to_result(unsafe {
-                bindings::configfs_register_subsystem(
-                    this.subsystem.get()
-                )
-            })
+            crate::error::to_result(
+                // SAFETY: We initialized `this.subsystem` according to C API contract above.
+                unsafe {
+                    bindings::configfs_register_subsystem(
+                        this.subsystem.get()
+                    )
+                }
+            )
         })
     }
 }
@@ -86,23 +94,48 @@ impl<DATA> Subsystem<DATA> {
 #[pinned_drop]
 impl<DATA> PinnedDrop for Subsystem<DATA> {
     fn drop(self: Pin<&mut Self>) {
+        // SAFETY: We registered `self.subsystem` in the initializer returned by `Self::new`.
         unsafe { bindings::configfs_unregister_subsystem(self.subsystem.get()) };
     }
 }
 
-pub unsafe trait HasGroup<DATA> {
+/// Trait that allows offset calculations for structs that embed a `bindings::config_group`.
+///
+/// # Safety
+///
+/// - Implementers of this trait must embed a `bindings::config_group`.
+/// - Methods must be implemented according to method documentation.
+unsafe trait HasGroup<DATA> {
+    /// Return the address of the `bindings::config_group` embedded in `Self`.
+    ///
+    /// # Safety
+    ///
+    /// - `this` must be a valid allocation of at least the size of `Self`.
     unsafe fn group(this: *const Self) -> *const bindings::config_group;
+
+    /// Return the address of the `Self` that `group` is embedded in.
+    ///
+    /// # Safety
+    ///
+    /// - `group` must point to the `bindings::config_group` that is embedded in
+    ///   `Self`.
     unsafe fn container_of(group: *const bindings::config_group) -> *const Self;
 }
 
+// SAFETY: `Subsystem<DATA>` embeds a field of type `bindings::config_group`
+// within the `subsystem` field.
 unsafe impl<DATA> HasGroup<DATA> for Subsystem<DATA> {
     unsafe fn group(this: *const Self) -> *const bindings::config_group {
+        // SAFETY: By impl and function safety requirement this projection is in bounds.
         unsafe { addr_of!((*(*this).subsystem.get()).su_group) }
     }
 
     unsafe fn container_of(group: *const bindings::config_group) -> *const Self {
+        // SAFETY: By impl and function safety requirement this projection is in bounds.
         let c_subsys_ptr = unsafe { container_of!(group, bindings::configfs_subsystem, su_group) };
         let opaque_ptr = c_subsys_ptr.cast::<Opaque<bindings::configfs_subsystem>>();
+        // SAFETY: By impl and function safety requirement, `opaque_ptr` and the
+        // pointer it returns, are within the same allocation.
         unsafe { container_of!(opaque_ptr, Subsystem<DATA>, subsystem) }
     }
 }
@@ -133,6 +166,7 @@ impl<DATA> Group<DATA> {
             group <- kernel::init::zeroed().chain(|v: &mut Opaque<bindings::config_group>| {
                 let place = v.get();
                 let name = name.as_bytes_with_nul().as_ptr();
+                // SAFETY: It is safe to initialize a group once it has been zeroed.
                 unsafe { bindings::config_group_init_type_name(place, name as _, item_type.as_ptr()) }
                 Ok(())
             }),
@@ -141,13 +175,21 @@ impl<DATA> Group<DATA> {
     }
 }
 
+// SAFETY: `Group<DATA>` embeds a field of type `bindings::config_group`
+// within the `group` field.
 unsafe impl<DATA> HasGroup<DATA> for Group<DATA> {
     unsafe fn group(this: *const Self) -> *const bindings::config_group {
-        unsafe { (*this).group.get() }
+        Opaque::raw_get(
+            // SAFETY: By impl and function safety requirements this field
+            // projection is within bounds of the allocation.
+            unsafe { addr_of!((*this).group) },
+        )
     }
 
     unsafe fn container_of(group: *const bindings::config_group) -> *const Self {
         let opaque_ptr = group.cast::<Opaque<bindings::config_group>>();
+        // SAFETY: By impl and function safety requirement, `opaque_ptr` and
+        // pointer it returns will be in the same allocation.
         unsafe { container_of!(opaque_ptr, Self, group) }
     }
 }
@@ -164,17 +206,48 @@ where
     CPTR: InPlaceInit<Group<CHLD>, PinnedSelf = PCPTR>,
     PCPTR: ForeignOwnable<PointedTo = Group<CHLD>>,
 {
+    /// # Safety
+    ///
+    /// If `this` does not represent the root group of a `configfs` subsystem,
+    /// `this` must be a pointer to a `bindings::config_group` embedded in a
+    /// `Group<PAR>`.
+    ///
+    /// Otherwise, `this` must be a pointer to a `bindings::config_group` that
+    /// is embedded in a `bindings::configfs_subsystem` that is embedded in a
+    /// `Subsystem<PAR>`.
+    unsafe fn get_parent_group_data<'a>(this: *mut bindings::config_group) -> &'a PAR {
+        let is_root = unsafe { (*this).cg_subsys.is_null() }; // TODO: additional check
+
+        if !is_root {
+            // SAFETY: By C API contact, `this` is a pointer to a
+            // `bindings::config_group` that we passed as a return value in from
+            // `make_group`. Such a pointer is embedded within a `Group<PAR>`.
+            unsafe { &(*Group::<PAR>::container_of(this)).data }
+        } else {
+            // SAFETY: By C API contract, `this` is a pointer to the
+            // `bindings::config_group` field within a `Subsystem<PAR>`.
+            unsafe { &(*Subsystem::container_of(this)).data }
+        }
+    }
+
+    /// # Safety
+    ///
+    /// If `this` does not represent the root group of a `configfs` subsystem,
+    /// `this` must be a pointer to a `bindings::config_group` embedded in a
+    /// `Group<PAR>`.
+    ///
+    /// Otherwise, `this` must be a pointer to a `bindings::config_group` that
+    /// is embedded in a `bindings::configfs_subsystem` that is embedded in a
+    /// `Subsystem<PAR>`.
+    ///
+    /// `name` must point to a null terminated string.
     unsafe extern "C" fn make_group(
         this: *mut bindings::config_group,
         name: *const kernel::ffi::c_char,
     ) -> *mut bindings::config_group {
-        let is_root = unsafe { (*this).cg_subsys.is_null() }; // TODO: additional check
-
-        let parent_data: &PAR = if !is_root {
-            unsafe { &(*Group::<PAR>::container_of(this)).data }
-        } else {
-            unsafe { &(*Subsystem::container_of(this)).data }
-        };
+        // SAFETY: By function safety requirements of this function, this call
+        // is safe.
+        let parent_data = unsafe { Self::get_parent_group_data(this) };
 
         let group_init = match PAR::make_group(parent_data, unsafe { CStr::from_char_ptr(name) }) {
             Ok(init) => init,
@@ -184,37 +257,56 @@ where
         let child_group = CPTR::try_pin_init(group_init, flags::GFP_KERNEL);
 
         match child_group {
-            Ok(child_group) => unsafe {
-                Group::<CHLD>::group(child_group.into_foreign()).cast_mut()
-            },
+            Ok(child_group) => {
+                let child_group_ptr = child_group.into_foreign();
+                // SAFETY: We allocated the pointee of `child_ptr` above as a
+                // `Group<CHLD>`.
+                unsafe { Group::<CHLD>::group(child_group_ptr) }.cast_mut()
+            }
             Err(e) => e.to_ptr(),
         }
     }
 
+    /// # Safety
+    ///
+    /// If `this` does not represent the root group of a `configfs` subsystem,
+    /// `this` must be a pointer to a `bindings::config_group` embedded in a
+    /// `Group<PAR>`.
+    ///
+    /// Otherwise, `this` must be a pointer to a `bindings::config_group` that
+    /// is embedded in a `bindings::configfs_subsystem` that is embedded in a
+    /// `Subsystem<PAR>`.
+    ///
+    /// `item` must point to a `bindings::config_item` within a
+    /// `bindings::config_group` within a `Group<CHLD>`.
     unsafe extern "C" fn drop_item(
         this: *mut bindings::config_group,
         item: *mut bindings::config_item,
     ) {
-        let is_root = unsafe { (*this).cg_subsys.is_null() }; // TODO: additional check
+        // SAFETY: By function safety requirements of this function, this call
+        // is safe.
+        let parent_data = unsafe { Self::get_parent_group_data(this) };
 
-        let parent_data: &PAR = if !is_root {
-            unsafe { &(*Group::container_of(this)).data }
-        } else {
-            unsafe { &(*Subsystem::container_of(this)).data }
-        };
-
-        let c_group_ptr = unsafe { kernel::container_of!(item, bindings::config_group, cg_item) };
-        let r_group_ptr = unsafe { Group::<CHLD>::container_of(c_group_ptr) };
+        // SAFETY: By function safety requirements, `item` is embedded in a
+        // `config_group`.
+        let c_child_group_ptr = unsafe { kernel::container_of!(item, bindings::config_group, cg_item) };
+        // SAFETY: By function safety requirements, `c_child_group_ptr` is
+        // embedded within a `Group<CHLD>`.
+        let r_child_group_ptr = unsafe { Group::<CHLD>::container_of(c_child_group_ptr) };
 
         if PAR::HAS_DROP_ITEM {
             PAR::drop_item(parent_data, unsafe {
-                PCPTR::borrow(r_group_ptr.cast_mut())
+                PCPTR::borrow(r_child_group_ptr.cast_mut())
             });
         }
 
+        // SAFETY: By C API contract, `configfs` is not going to touch `item`
+        // again.
         unsafe { bindings::config_item_put(item) };
 
-        let pin_child: PCPTR = unsafe { PCPTR::from_foreign(r_group_ptr.cast_mut()) };
+        // SAFETY: We called `into_foreign` on `r_chilc_group_ptr` in
+        // `make_group`.
+        let pin_child: PCPTR = unsafe { PCPTR::from_foreign(r_child_group_ptr.cast_mut()) };
         drop(pin_child);
     }
 
@@ -350,7 +442,7 @@ pub trait AttributeOperations<DATA> {
     /// state to reflect the parsed value. Partial writes are not supported and
     /// implementations should expect the full page to arrive in one write
     /// operation.
-    fn store(data: &DATA, _page: &[u8]) {
+    fn store(_data: &DATA, _page: &[u8]) {
         kernel::build_error!(kernel::error::VTABLE_DEFAULT_ERROR)
     }
 }
