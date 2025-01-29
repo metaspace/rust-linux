@@ -200,6 +200,33 @@ where
     CPTR: InPlaceInit<Group<CHLD>, PinnedSelf = PCPTR>,
     PCPTR: ForeignOwnable<PointedTo = Group<CHLD>>;
 
+/// # Safety
+///
+/// `this` must be a valid pointer.
+///
+/// If `this` does not represent the root group of a `configfs` subsystem,
+/// `this` must be a pointer to a `bindings::config_group` embedded in a
+/// `Group<PAR>`.
+///
+/// Otherwise, `this` must be a pointer to a `bindings::config_group` that
+/// is embedded in a `bindings::configfs_subsystem` that is embedded in a
+/// `Subsystem<PAR>`.
+unsafe fn get_group_data<'a, PAR>(this: *mut bindings::config_group) -> &'a PAR {
+    // SAFETY: `this` is a valid pointer.
+    let is_root = unsafe { (*this).cg_subsys.is_null() };
+
+    if !is_root {
+        // SAFETY: By C API contact, `this` is a pointer to a
+        // `bindings::config_group` that we passed as a return value in from
+        // `make_group`. Such a pointer is embedded within a `Group<PAR>`.
+        unsafe { &(*Group::<PAR>::container_of(this)).data }
+    } else {
+        // SAFETY: By C API contract, `this` is a pointer to the
+        // `bindings::config_group` field within a `Subsystem<PAR>`.
+        unsafe { &(*Subsystem::container_of(this)).data }
+    }
+}
+
 impl<PAR, CHLD, CPTR, PCPTR> GroupOperationsVTable<PAR, CHLD, CPTR, PCPTR>
 where
     PAR: GroupOperations<PAR, CHLD, CPTR, PCPTR>,
@@ -208,29 +235,7 @@ where
 {
     /// # Safety
     ///
-    /// If `this` does not represent the root group of a `configfs` subsystem,
-    /// `this` must be a pointer to a `bindings::config_group` embedded in a
-    /// `Group<PAR>`.
-    ///
-    /// Otherwise, `this` must be a pointer to a `bindings::config_group` that
-    /// is embedded in a `bindings::configfs_subsystem` that is embedded in a
-    /// `Subsystem<PAR>`.
-    unsafe fn get_parent_group_data<'a>(this: *mut bindings::config_group) -> &'a PAR {
-        let is_root = unsafe { (*this).cg_subsys.is_null() }; // TODO: additional check
-
-        if !is_root {
-            // SAFETY: By C API contact, `this` is a pointer to a
-            // `bindings::config_group` that we passed as a return value in from
-            // `make_group`. Such a pointer is embedded within a `Group<PAR>`.
-            unsafe { &(*Group::<PAR>::container_of(this)).data }
-        } else {
-            // SAFETY: By C API contract, `this` is a pointer to the
-            // `bindings::config_group` field within a `Subsystem<PAR>`.
-            unsafe { &(*Subsystem::container_of(this)).data }
-        }
-    }
-
-    /// # Safety
+    /// `this` must be a valid pointer.
     ///
     /// If `this` does not represent the root group of a `configfs` subsystem,
     /// `this` must be a pointer to a `bindings::config_group` embedded in a
@@ -247,7 +252,7 @@ where
     ) -> *mut bindings::config_group {
         // SAFETY: By function safety requirements of this function, this call
         // is safe.
-        let parent_data = unsafe { Self::get_parent_group_data(this) };
+        let parent_data = unsafe { get_group_data(this) };
 
         let group_init = match PAR::make_group(parent_data, unsafe { CStr::from_char_ptr(name) }) {
             Ok(init) => init,
@@ -285,11 +290,12 @@ where
     ) {
         // SAFETY: By function safety requirements of this function, this call
         // is safe.
-        let parent_data = unsafe { Self::get_parent_group_data(this) };
+        let parent_data = unsafe { get_group_data(this) };
 
         // SAFETY: By function safety requirements, `item` is embedded in a
         // `config_group`.
-        let c_child_group_ptr = unsafe { kernel::container_of!(item, bindings::config_group, cg_item) };
+        let c_child_group_ptr =
+            unsafe { kernel::container_of!(item, bindings::config_group, cg_item) };
         // SAFETY: By function safety requirements, `c_child_group_ptr` is
         // embedded within a `Group<CHLD>`.
         let r_child_group_ptr = unsafe { Group::<CHLD>::container_of(c_child_group_ptr) };
@@ -357,43 +363,67 @@ pub struct Attribute<AO, DATA> {
     _p: PhantomData<(AO, DATA)>,
 }
 
+// SAFETY: We do not provide any operations on `Attribute`.
 unsafe impl<AO, DATA> Sync for Attribute<AO, DATA> {}
 
+// SAFETY: Ownership of `Attribute` can safely be transferred to other threads.
 unsafe impl<AO, DATA> Send for Attribute<AO, DATA> {}
 
 impl<AO, DATA> Attribute<AO, DATA>
 where
     AO: AttributeOperations<DATA>,
 {
+    /// # Safety
+    ///
+    /// `item` must be embedded in a `bindings::config_group`.
+    ///
+    /// If `item` does not represent the root group of a `configfs` subsystem,
+    /// the group must be embedded in a `Group<PAR>`.
+    ///
+    /// Otherwise, the group must be a embedded in a
+    /// `bindings::configfs_subsystem` that is embedded in a `Subsystem<PAR>`.
+    ///
+    /// `page` must point to a writable buffer of size at least [`PAGE_SIZE`].
     unsafe extern "C" fn show(
         item: *mut bindings::config_item,
         page: *mut kernel::ffi::c_char,
     ) -> isize {
-        let c_group: *mut bindings::config_group = item.cast(); // TODO: Use container_of
-        let is_root = unsafe { (*c_group).cg_subsys.is_null() }; // TODO: additional check
+        // SAFETY: By function safety requirements, `item` is embedded in a
+        // `config_group`.
+        let c_group: *mut bindings::config_group =
+            unsafe { container_of!(item, bindings::config_group, cg_item) }.cast_mut();
 
-        let data: &DATA = if is_root {
-            unsafe { &(*Subsystem::container_of(c_group)).data }
-        } else {
-            unsafe { &(*Group::container_of(c_group)).data }
-        };
+        // SAFETY: The function safety requirements for this function satisfy
+        // the conditions for this call.
+        let data: &DATA = unsafe { get_group_data(c_group) };
 
         AO::show(data, unsafe { &mut *(page as *mut [u8; 4096]) })
     }
 
+    /// # Safety
+    ///
+    /// `item` must be embedded in a `bindings::config_group`.
+    ///
+    /// If `item` does not represent the root group of a `configfs` subsystem,
+    /// the group must be embedded in a `Group<PAR>`.
+    ///
+    /// Otherwise, the group must be a embedded in a
+    /// `bindings::configfs_subsystem` that is embedded in a `Subsystem<PAR>`.
+    ///
+    /// `page` must point to a writable buffer of size at least `size`.
     unsafe extern "C" fn store(
         item: *mut bindings::config_item,
         page: *const kernel::ffi::c_char,
         size: usize,
     ) -> isize {
-        let c_group: *mut bindings::config_group = item.cast(); // TODO: Use container_of
-        let is_root = unsafe { (*c_group).cg_subsys.is_null() }; // TODO: additional check
+        // SAFETY: By function safety requirements, `item` is embedded in a
+        // `config_group`.
+        let c_group: *mut bindings::config_group =
+            unsafe { container_of!(item, bindings::config_group, cg_item) }.cast_mut();
 
-        let data: &DATA = if is_root {
-            unsafe { &(*Subsystem::container_of(c_group)).data }
-        } else {
-            unsafe { &(*Group::container_of(c_group)).data }
-        };
+        // SAFETY: The function safety requirements for this function satisfy
+        // the conditions for this call.
+        let data: &DATA = unsafe { get_group_data(c_group) };
 
         AO::store(data, unsafe {
             core::slice::from_raw_parts(page.cast(), size)
@@ -459,19 +489,26 @@ pub struct AttributeList<const N: usize, DATA>(
     UnsafeCell<[*mut kernel::ffi::c_void; N]>,
     PhantomData<DATA>,
 );
-// TODO: Make attribute constructors unsafe
 
 unsafe impl<const N: usize, DATA> Send for AttributeList<N, DATA> {}
 unsafe impl<const N: usize, DATA> Sync for AttributeList<N, DATA> {}
 
 impl<const N: usize, DATA> AttributeList<N, DATA> {
     #[doc(hidden)]
-    pub const fn new() -> Self {
+    /// # Safety
+    ///
+    /// This function can only be called by expanding the `configfs_attrs`
+    /// macro.
+    pub const unsafe fn new() -> Self {
         Self(UnsafeCell::new([core::ptr::null_mut(); N]), PhantomData)
     }
 
     #[doc(hidden)]
-    pub const fn add<const I: usize, O: AttributeOperations<DATA>>(
+    /// # Safety
+    ///
+    /// This function can only be called by expanding the `configfs_attrs`
+    /// macro.
+    pub const unsafe fn add<const I: usize, O: AttributeOperations<DATA>>(
         &'static self,
         attribute: &'static Attribute<O, DATA>,
     ) {
@@ -479,7 +516,11 @@ impl<const N: usize, DATA> AttributeList<N, DATA> {
             kernel::build_error("Invalid attribute index");
         }
 
-        unsafe { (&mut *self.0.get())[I] = attribute as *const _ as _ };
+        // SAFETY: This function is only called through `configfs_attrs`. This
+        // ensures that we are evaluating the function in const context when
+        // initializing a static. As such, the reference created below will be
+        // exclusive.
+        unsafe { (&mut *self.0.get())[I] = (attribute as *const Attribute<O, DATA>).cast_mut().cast() };
     }
 }
 
@@ -599,7 +640,11 @@ macro_rules! configfs_attrs {
                                 @eat($($rname $rattr,)*),
                                 @assign($($assign)* {
                                     const N: usize = $cnt;
-                                    $crate::macros::paste!( [< $container:upper _ATTRS >]).add::<N, _>(& $crate::macros::paste!( [< $container:upper _ $name:upper _ATTR >]));
+                                    // SAFETY: We are expanding `configfs_attrs`.
+                                    unsafe { 
+                                        $crate::macros::paste!( [< $container:upper _ATTRS >])
+                                            .add::<N, _>(& $crate::macros::paste!( [< $container:upper _ $name:upper _ATTR >]))
+                                    };
                                 }),
                                 @cnt(1usize + $cnt),
         )
@@ -635,16 +680,18 @@ macro_rules! configfs_attrs {
         {
             $(
                 $crate::macros::paste!{
+                    // SAFETY: We are expanding `configfs_attrs`.
                     static [< $container:upper _ $name:upper _ATTR >] : $crate::configfs::Attribute<$attr, $container>
-                        = $crate::configfs::Attribute::new(c_str!(::core::stringify!($name)));
+                        = unsafe { $crate::configfs::Attribute::new(c_str!(::core::stringify!($name))) };
                 }
             )+
 
 
                 const N: usize = $cnt + 1usize;
             $crate::macros::paste!{
+                // SAFETY: We are expanding `configfs_attrs`.
                 static [< $container:upper _ATTRS >] : $crate::configfs::AttributeList<N, $container> =
-                    $crate::configfs::AttributeList::new();
+                    unsafe { $crate::configfs::AttributeList::new() };
             }
 
             $($assign)+
