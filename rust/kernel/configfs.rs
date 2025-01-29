@@ -67,17 +67,28 @@ impl<DATA> Subsystem<DATA> {
         data: impl PinInit<DATA, Error>,
     ) -> impl PinInit<Self, Error> {
         try_pin_init!(Self {
-            subsystem <- kernel::init::zeroed().chain(|place: &mut Opaque<bindings::configfs_subsystem>| {
-                // SAFETY: All of `place` is valid for write.
-                unsafe { addr_of_mut!((*place.get()).su_group.cg_item.ci_name ).write(name.as_ptr().cast_mut().cast()) };
-                // SAFETY: All of `place` is valid for write.
-                unsafe { addr_of_mut!((*place.get()).su_group.cg_item.ci_type).write(item_type.as_ptr()) };
-                // SAFETY: We initialized the required fields of `place.group` above.
-                unsafe { bindings::config_group_init(&mut (*place.get()).su_group) };
-                // SAFETY: `place.su_mutex` is valid for use as a mutex.
-                unsafe { bindings::__mutex_init(&mut (*place.get()).su_mutex, kernel::optional_name!().as_char_ptr(), kernel::static_lock_class!().as_ptr()) }
-                Ok(())
-            }),
+            subsystem <- kernel::init::zeroed().chain(
+                |place: &mut Opaque<bindings::configfs_subsystem>| {
+                    // SAFETY: All of `place` is valid for write.
+                    unsafe {
+                        addr_of_mut!((*place.get()).su_group.cg_item.ci_name )
+                            .write(name.as_ptr().cast_mut().cast())
+                    };
+                    // SAFETY: All of `place` is valid for write.
+                    unsafe {
+                        addr_of_mut!((*place.get()).su_group.cg_item.ci_type)
+                            .write(item_type.as_ptr())
+                    };
+                    // SAFETY: We initialized the required fields of `place.group` above.
+                    unsafe { bindings::config_group_init(&mut (*place.get()).su_group) };
+                    // SAFETY: `place.su_mutex` is valid for use as a mutex.
+                    unsafe { bindings::__mutex_init(
+                        &mut (*place.get()).su_mutex,
+                        kernel::optional_name!().as_char_ptr(),
+                        kernel::static_lock_class!().as_ptr())
+                    }
+                    Ok(())
+                }),
             data <- data,
         }).pin_chain(|this| {
             crate::error::to_result(
@@ -168,7 +179,9 @@ impl<DATA> Group<DATA> {
                 let place = v.get();
                 let name = name.as_bytes_with_nul().as_ptr();
                 // SAFETY: It is safe to initialize a group once it has been zeroed.
-                unsafe { bindings::config_group_init_type_name(place, name as _, item_type.as_ptr()) }
+                unsafe {
+                    bindings::config_group_init_type_name(place, name as _, item_type.as_ptr())
+                };
                 Ok(())
             }),
             data <- data,
@@ -653,21 +666,24 @@ macro_rules! configfs_attrs {
      @assign($($assign:block)*),
      @cnt($cnt:expr),
     ) => {
-        $crate::configfs_attrs!(count:
-                                @container($container),
-                                @child($($child, $pointer, $pinned)?),
-                                @no_child($($no_child)?),
-                                @attrs($($aname $aattr)+),
-                                @eat($($rname $rattr,)*),
-                                @assign($($assign)* {
-                                    const N: usize = $cnt;
-                                    // SAFETY: We are expanding `configfs_attrs`.
-                                    unsafe {
-                                        $crate::macros::paste!( [< $container:upper _ATTRS >])
-                                            .add::<N, _>(& $crate::macros::paste!( [< $container:upper _ $name:upper _ATTR >]))
-                                    };
-                                }),
-                                @cnt(1usize + $cnt),
+        $crate::configfs_attrs!(
+            count:
+            @container($container),
+            @child($($child, $pointer, $pinned)?),
+            @no_child($($no_child)?),
+            @attrs($($aname $aattr)+),
+            @eat($($rname $rattr,)*),
+            @assign($($assign)* {
+                const N: usize = $cnt;
+                // SAFETY: We are expanding `configfs_attrs`.
+                unsafe {
+                    $crate::macros::paste!( [< $container:upper _ATTRS >])
+                        .add::<N, _>(
+                            & $crate::macros::paste!( [< $container:upper _ $name:upper _ATTR >])
+                        )
+                };
+            }),
+            @cnt(1usize + $cnt),
         )
     };
     (count:
@@ -702,16 +718,20 @@ macro_rules! configfs_attrs {
             $(
                 $crate::macros::paste!{
                     // SAFETY: We are expanding `configfs_attrs`.
-                    static [< $container:upper _ $name:upper _ATTR >] : $crate::configfs::Attribute<$attr, $container>
-                        = unsafe { $crate::configfs::Attribute::new(c_str!(::core::stringify!($name))) };
+                    static [< $container:upper _ $name:upper _ATTR >]:
+                      $crate::configfs::Attribute<$attr, $container> =
+                        unsafe {
+                            $crate::configfs::Attribute::new(c_str!(::core::stringify!($name)))
+                        };
                 }
             )+
 
 
-                const N: usize = $cnt + 1usize;
+            const N: usize = $cnt + 1usize;
             $crate::macros::paste!{
                 // SAFETY: We are expanding `configfs_attrs`.
-                static [< $container:upper _ATTRS >] : $crate::configfs::AttributeList<N, $container> =
+                static [< $container:upper _ATTRS >]:
+                  $crate::configfs::AttributeList<N, $container> =
                     unsafe { $crate::configfs::AttributeList::new() };
             }
 
@@ -730,8 +750,10 @@ macro_rules! configfs_attrs {
 
             $(
                 $crate::macros::paste!{
-                    static [< $container:upper _TPE >] : $crate::configfs::ItemType<$container>  =
-                        $crate::configfs::ItemType::new_with_child_ctor::<N, $container, $child, $pointer, $pinned>(&  [<$ container:upper _ATTRS >] );
+                    static [< $container:upper _TPE >]:
+                      $crate::configfs::ItemType<$container>  =
+                        $crate::configfs::ItemType::new_with_child_ctor::
+                    <N, $container, $child, $pointer, $pinned>(&  [<$ container:upper _ATTRS >] );
                 }
             )?
 
