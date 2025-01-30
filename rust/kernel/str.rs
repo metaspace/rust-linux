@@ -900,3 +900,6 @@ impl fmt::Debug for CString {
 macro_rules! fmt {
     ($($f:tt)*) => ( core::format_args!($($f)*) )
 }
+
+mod buffer_writer;
+pub use buffer_writer::BufferWriter;
